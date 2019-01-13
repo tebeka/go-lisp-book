@@ -4,36 +4,7 @@ import (
 	"fmt"
 	"io"
 	"strconv"
-	"strings"
 )
-
-type Lexer struct {
-	tokens []string
-	i      int
-}
-
-func NewLexer(code string) *Lexer {
-	code = strings.Replace(code, "(", " ( ", -1)
-	code = strings.Replace(code, ")", " )", -1)
-	tokens := strings.Fields(code)
-	return &Lexer{tokens: tokens, i: -1}
-}
-
-func (l *Lexer) Next() bool {
-	l.i++
-	return l.i < len(l.tokens)
-}
-
-func (l *Lexer) Token() string {
-	return l.tokens[l.i]
-}
-
-func (l *Lexer) Peek() string {
-	if l.i >= len(l.tokens) {
-		return ""
-	}
-	return l.tokens[l.i+1]
-}
 
 type Expr interface {
 	Eval() (Expr, error)
@@ -133,20 +104,4 @@ func readFromTokens(lex *Lexer) (Expr, error) {
 		}
 		return Symbol(lex.Token()), nil
 	}
-}
-
-func main() {
-	code := "(* 3.14 (* 10 10))"
-	//code := "(* 7 2)"
-	prog, err := parse(code)
-	if err != nil {
-		panic(err)
-	}
-	fmt.Printf("prog: %v\n", prog)
-	val, err := prog.Eval()
-	if err != nil {
-		panic(err)
-	}
-
-	fmt.Printf("val: %v\n", val)
 }
