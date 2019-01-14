@@ -52,7 +52,7 @@ func (l List) Eval() (Expr, error) {
 
 	switch sym {
 	case "+":
-		return Number(nlval * nrval), nil
+		return Number(nlval + nrval), nil
 	case "-":
 		return Number(nlval - nrval), nil
 	case "*":
@@ -62,7 +62,6 @@ func (l List) Eval() (Expr, error) {
 	}
 
 	return nil, fmt.Errorf("unknown operator - %v", sym)
-
 }
 
 type Symbol string
