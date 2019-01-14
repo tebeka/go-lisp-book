@@ -27,6 +27,9 @@ Book on writing scheme like interpreter in Go.
 	- pointer receivers
     - commenting methods
     - Test
+- Parser
+- Eval
+- Parallel eval
 
 ## License
 [Attribution 4.0 International (CC BY 4.0)](https://creativecommons.org/licenses/by/4.0/)
