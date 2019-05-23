@@ -17,60 +17,53 @@ var (
 
 func init() {
 	env := map[string]interface{}{
-		"+": makeBinop(func(a, b float64) (interface{}, error) {
-			return a + b, nil
-		}),
-		"-": makeBinop(func(a, b float64) (interface{}, error) {
-			return a - b, nil
-		}),
-		"*": makeBinop(func(a, b float64) (interface{}, error) {
-			return a * b, nil
-		}),
-		"/": makeBinop(func(a, b float64) (interface{}, error) {
-			return a / b, nil
-		}),
-		">": makeBinop(func(a, b float64) (interface{}, error) {
-			return a > b, nil
-		}),
-		">=": makeBinop(func(a, b float64) (interface{}, error) {
-			return a >= b, nil
-		}),
-		"<": makeBinop(func(a, b float64) (interface{}, error) {
-			return a < b, nil
-		}),
-		"<=": makeBinop(func(a, b float64) (interface{}, error) {
-			return a < b, nil
-		}),
-		"=": makeBinop(func(a, b float64) (interface{}, error) {
-			return a == b, nil
-		}),
-		"!=": makeBinop(func(a, b float64) (interface{}, error) {
-			return a != b, nil
-		}),
-		"if":  function(evalIf),
-		"or":  function(evalOr),
-		"and": function(evalAnd),
+		"+":   &binOp{"+", func(a, b float64) interface{} { return a + b }},
+		"-":   &binOp{"-", func(a, b float64) interface{} { return a - b }},
+		"*":   &binOp{"*", func(a, b float64) interface{} { return a * b }},
+		"/":   &binOp{"/", func(a, b float64) interface{} { return a / b }},
+		">":   &binOp{">", func(a, b float64) interface{} { return a > b }},
+		">=":  &binOp{">=", func(a, b float64) interface{} { return a >= b }},
+		"<":   &binOp{"<", func(a, b float64) interface{} { return a < b }},
+		"<=":  &binOp{"<=", func(a, b float64) interface{} { return a <= b }},
+		"=":   &binOp{"=", func(a, b float64) interface{} { return a == b }},
+		"!=":  &binOp{"!=", func(a, b float64) interface{} { return a != b }},
+		"if":  ifExpr{},
+		"or":  orExpr{},
+		"and": andExpr{},
 	}
 
 	builtins = envList{env}
 }
 
-func makeBinop(fn func(float64, float64) (interface{}, error)) function {
-	return func(args []interface{}, env envList) (interface{}, error) {
-		if len(args) != 2 {
-			return nil, fmt.Errorf("wrong number of arguments")
-		}
-		lhs, ok := args[0].(float64)
-		if !ok {
-			return nil, fmt.Errorf("bad value - %v", args[0])
-		}
-		rhs, ok := args[1].(float64)
-		if !ok {
-			return nil, fmt.Errorf("bad value - %v", args[1])
-		}
+type callable interface {
+	call([]interface{}, envList) (interface{}, error)
+}
 
-		return fn(lhs, rhs)
+type binOp struct {
+	name string
+	fn   func(float64, float64) interface{}
+}
+
+func (b *binOp) call(args []interface{}, env envList) (interface{}, error) {
+	if len(args) != 2 {
+		return nil, fmt.Errorf("wrong number of arguments")
 	}
+
+	lhs, ok := args[0].(float64)
+	if !ok {
+		return nil, fmt.Errorf("lhs type error, got %v of type %T", args[0], args[0])
+	}
+
+	rhs, ok := args[1].(float64)
+	if !ok {
+		return nil, fmt.Errorf("rhs type error, got %v of type %T", args[1], args[1])
+	}
+
+	return b.fn(lhs, rhs), nil
+}
+
+func (b *binOp) String() string {
+	return b.name
 }
 
 func tokenize(code string) []string {
@@ -80,9 +73,11 @@ func tokenize(code string) []string {
 	return strings.Fields(code)
 }
 
+type ifExpr struct{}
+
 // (if (> 2 1) 10 20)
 // (if (> 2 1) 10)
-func evalIf(args []interface{}, env envList) (interface{}, error) {
+func (e ifExpr) call(args []interface{}, env envList) (interface{}, error) {
 	if len(args) < 2 || len(args) > 3 {
 		return nil, fmt.Errorf("malformed if")
 	}
@@ -107,8 +102,14 @@ func evalIf(args []interface{}, env envList) (interface{}, error) {
 	return nil, nil
 }
 
+func (e ifExpr) String() string {
+	return "if"
+}
+
+type orExpr struct{}
+
 // (or (> 1 2) (> 3 4))
-func evalOr(args []interface{}, env envList) (interface{}, error) {
+func (e orExpr) call(args []interface{}, env envList) (interface{}, error) {
 	for _, expr := range args {
 		out, err := eval(expr, env)
 		if err != nil {
@@ -127,8 +128,14 @@ func evalOr(args []interface{}, env envList) (interface{}, error) {
 	return false, nil
 }
 
+func (e orExpr) String() string {
+	return "or"
+}
+
+type andExpr struct{}
+
 // (and (> 1 2) (> 3 4))
-func evalAnd(args []interface{}, env envList) (interface{}, error) {
+func (e andExpr) call(args []interface{}, env envList) (interface{}, error) {
 	for _, expr := range args {
 		out, err := eval(expr, env)
 		if err != nil {
@@ -145,6 +152,10 @@ func evalAnd(args []interface{}, env envList) (interface{}, error) {
 	}
 
 	return true, nil
+}
+
+func (e andExpr) String() string {
+	return "and"
 }
 
 // (define a 1)
@@ -167,20 +178,39 @@ func evalDefine(args []interface{}, env envList) (interface{}, error) {
 	return nil, nil
 }
 
+type lambdaExpr struct {
+	params []string
+	body   interface{}
+	env    envList
+}
+
+func (e *lambdaExpr) call(args []interface{}, env envList) (interface{}, error) {
+	if len(args) != len(e.params) {
+		return nil, fmt.Errorf("wrong number of arguments")
+	}
+
+	locals := make(map[string]interface{})
+	for i, param := range e.params {
+		locals[param] = args[i]
+	}
+	env = append(env, locals)
+	return eval(e.body, env)
+}
+
 // (lambda (a b) (+ a b))
-func evalLambda(args []interface{}, env envList) (interface{}, error) {
+func makeLambda(args []interface{}, env envList) (interface{}, error) {
 	if len(args) != 2 {
 		return nil, fmt.Errorf("malformed lambda")
 	}
 	body := args[1]
 
-	varams, ok := args[0].([]interface{})
+	arg0, ok := args[0].([]interface{})
 	if !ok {
 		return nil, fmt.Errorf("malformed lambda")
 	}
 
 	var params []string
-	for _, v := range varams {
+	for _, v := range arg0 {
 		param, ok := v.(string)
 		if !ok {
 			return nil, fmt.Errorf("malformed lambda")
@@ -188,20 +218,12 @@ func evalLambda(args []interface{}, env envList) (interface{}, error) {
 		params = append(params, param)
 	}
 
-	fn := func(args []interface{}, env envList) (interface{}, error) {
-		if len(args) != len(params) {
-			return nil, fmt.Errorf("wrong number of arguments")
-		}
-
-		e := make(map[string]interface{})
-		for i, param := range params {
-			e[param] = args[i]
-		}
-		env = append(env, e)
-		return eval(body, env)
+	lambda := &lambdaExpr{
+		params: params,
+		body:   body,
+		env:    env,
 	}
-
-	return function(fn), nil
+	return lambda, nil
 }
 
 func readSExpr(tokens []string) (interface{}, []string, error) {
@@ -241,8 +263,6 @@ func readSExpr(tokens []string) (interface{}, []string, error) {
 	return tok, tokens, nil // name
 }
 
-type function func(values []interface{}, env envList) (interface{}, error)
-
 func eval(sexpr interface{}, env envList) (interface{}, error) {
 	if name, ok := sexpr.(string); ok { // name
 		e := findEnv(name, env)
@@ -265,7 +285,7 @@ func eval(sexpr interface{}, env envList) (interface{}, error) {
 		case "define":
 			return evalDefine(rest, env)
 		case "lambda":
-			return evalLambda(rest, env)
+			return makeLambda(rest, env)
 		}
 	}
 
@@ -274,7 +294,7 @@ func eval(sexpr interface{}, env envList) (interface{}, error) {
 		return nil, err
 	}
 	// function invocation
-	fn, ok := val.(function)
+	fn, ok := val.(callable)
 	if !ok {
 		return nil, fmt.Errorf("%v is not a function", val)
 	}
@@ -288,7 +308,7 @@ func eval(sexpr interface{}, env envList) (interface{}, error) {
 		args = append(args, arg)
 	}
 
-	return fn(args, env)
+	return fn.call(args, env)
 }
 
 func repl() {
