@@ -167,6 +167,43 @@ func evalDefine(args []interface{}, env envList) (interface{}, error) {
 	return nil, nil
 }
 
+// (lambda (a b) (+ a b))
+func evalLambda(args []interface{}, env envList) (interface{}, error) {
+	if len(args) != 2 {
+		return nil, fmt.Errorf("malformed lambda")
+	}
+	body := args[1]
+
+	varams, ok := args[0].([]interface{})
+	if !ok {
+		return nil, fmt.Errorf("malformed lambda")
+	}
+
+	var params []string
+	for _, v := range varams {
+		param, ok := v.(string)
+		if !ok {
+			return nil, fmt.Errorf("malformed lambda")
+		}
+		params = append(params, param)
+	}
+
+	fn := func(args []interface{}, env envList) (interface{}, error) {
+		if len(args) != len(params) {
+			return nil, fmt.Errorf("wrong number of arguments")
+		}
+
+		e := make(map[string]interface{})
+		for i, param := range params {
+			e[param] = args[i]
+		}
+		env = append(env, e)
+		return eval(body, env)
+	}
+
+	return function(fn), nil
+}
+
 func readSExpr(tokens []string) (interface{}, []string, error) {
 	var err error
 	if len(tokens) == 0 {
@@ -222,9 +259,14 @@ func eval(sexpr interface{}, env envList) (interface{}, error) {
 
 	op, rest := list[0], list[1:]
 	name, ok := op.(string)
-	// define is special since we create a new name
-	if ok && name == "define" {
-		return evalDefine(rest, env)
+	// define & lambda are special cases
+	if ok {
+		switch name {
+		case "define":
+			return evalDefine(rest, env)
+		case "lambda":
+			return evalLambda(rest, env)
+		}
 	}
 
 	val, err := eval(op, env)
