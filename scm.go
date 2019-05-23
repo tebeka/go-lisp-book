@@ -12,6 +12,7 @@ import (
 
 var (
 	commentRe = regexp.MustCompile(";.*$")
+	env       = make(map[string]interface{})
 )
 
 func tokenize(code string) []string {
@@ -35,14 +36,17 @@ func readSExpr(tokens []string) (*SExpr, []string, error) {
 	tok, tokens := tokens[0], tokens[1:]
 	var sexpr SExpr
 	if tok == "(" {
+		var children []*SExpr
 		for tokens[0] != ")" {
 			var child *SExpr
 			child, tokens, err = readSExpr(tokens)
 			if err != nil {
 				return nil, nil, err
 			}
-			sexpr.children = append(sexpr.children, child)
+			children = append(children, child)
 		}
+		sexpr.value = children[0]
+		sexpr.children = children[1:]
 		tokens = tokens[1:] // remove closing ')'
 		return &sexpr, tokens, nil
 	}
@@ -65,6 +69,65 @@ func readSExpr(tokens []string) (*SExpr, []string, error) {
 	}
 
 	return &sexpr, tokens, nil
+}
+
+func evalAtom(atom interface{}) (interface{}, error) {
+	if val, ok := atom.(float64); ok {
+		return val, nil
+	}
+
+	name, ok := atom.(string)
+	if !ok {
+		return nil, fmt.Errorf("unkown atom type for %v - %T", atom, atom)
+	}
+
+	value, ok
+}
+
+func eval(s *SExpr) (interface{}, error) {
+	if len(s.children) == 0 { // atom
+	}
+	val, ok := s.value.(float64)
+	if ok {
+		if len(s.children) > 0 {
+			return nil, fmt.Errorf("%s is not callable", s.value)
+		}
+		return val, nil
+	}
+
+	name, ok := s.value.(string)
+	if !ok {
+		return nil, fmt.Errorf("unknown type - %T", s.value)
+	}
+
+	val, ok := env[name]
+	if !ok {
+		return
+	}
+
+	if len(s.children) == 0 {
+		if val, ok := s.value.(float64); ok {
+			return val, nil
+		}
+
+		name, ok := s.value.(string)
+		if !ok {
+		}
+
+		val, ok := env[name]
+		if !ok {
+			return nil, fmt.Errorf("unknown name - %q", name)
+		}
+
+		return val, nil
+	}
+
+	val, ok := env[name]
+	if !ok {
+		if !ok {
+			return nil, fmt.Errorf("unknown name - %q", name)
+		}
+	}
 }
 
 func repl() {
@@ -98,6 +161,20 @@ func repl() {
 	}
 }
 
+// Env is environment
+type Env struct {
+	bindings map[string]interface{}
+	parent   *Env
+}
+
+func printSExpr(s *SExpr, indent int) {
+	fmt.Printf("%*s", indent, " ")
+	fmt.Println(s.value)
+	for _, c := range s.children {
+		printSExpr(c, indent+4)
+	}
+}
+
 func main() {
 	code := "(* 3 6)"
 	tokens := tokenize(code)
@@ -106,33 +183,5 @@ func main() {
 		fmt.Printf("ERROR: %s", err)
 		os.Exit(1)
 	}
-	fmt.Println(sexpr)
-}
-
-type Env struct {
-	bindings map[string]Expr
-	parent   *Env
-}
-
-func NewEnv(parent *Env, bindings map[string]Expr) *Env {
-	if bindings == nil {
-		bindings = make(map[string]Expr)
-	}
-	return &Env{bindings: bindings, parent: parent}
-}
-
-func (e *Env) Set(name string, value Expr) {
-	e.bindings[name] = value
-}
-
-func (e *Env) Get(name string) Expr {
-	for e != nil {
-		val, ok := e.bindings[name]
-		if ok {
-			return val
-		}
-		e = e.parent
-	}
-
-	return nil
+	printSExpr(sexpr, 0)
 }
