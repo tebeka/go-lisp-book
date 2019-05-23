@@ -12,7 +12,7 @@ import (
 
 var (
 	commentRe = regexp.MustCompile(";.*$")
-	builtin   envList
+	builtins  envList
 	evalFuncs map[string]evalFunc
 )
 
@@ -50,7 +50,7 @@ func init() {
 		}),
 	}
 
-	builtin = envList{env}
+	builtins = envList{env}
 	evalFuncs = map[string]evalFunc{
 		"if":     evalIf,
 		"or":     evalOr,
@@ -60,7 +60,7 @@ func init() {
 }
 
 func makeBinop(fn func(float64, float64) (interface{}, error)) function {
-	return func(args []interface{}) (interface{}, error) {
+	return func(args []interface{}, env envList) (interface{}, error) {
 		if len(args) != 2 {
 			return nil, fmt.Errorf("wrong number of arguments")
 		}
@@ -84,16 +84,16 @@ func tokenize(code string) []string {
 	return strings.Fields(code)
 }
 
-type evalFunc func(args []interface{}) (interface{}, error)
+type evalFunc func(args []interface{}, env envList) (interface{}, error)
 
 // (if (> 2 1) 10 20)
 // (if (> 2 1) 10)
-func evalIf(args []interface{}) (interface{}, error) {
+func evalIf(args []interface{}, env envList) (interface{}, error) {
 	if len(args) < 2 || len(args) > 3 {
 		return nil, fmt.Errorf("malformed if")
 	}
 
-	val, err := eval(args[0])
+	val, err := eval(args[0], env)
 	if err != nil {
 		return nil, err
 	}
@@ -103,20 +103,20 @@ func evalIf(args []interface{}) (interface{}, error) {
 		return nil, fmt.Errorf("no bool values as test")
 	}
 	if test {
-		return eval(args[1])
+		return eval(args[1], env)
 	}
 
 	if len(args) == 3 { // has else part
-		return eval(args[2])
+		return eval(args[2], env)
 	}
 
 	return nil, nil
 }
 
 // (or (> 1 2) (> 3 4))
-func evalOr(args []interface{}) (interface{}, error) {
+func evalOr(args []interface{}, env envList) (interface{}, error) {
 	for _, expr := range args {
-		out, err := eval(expr)
+		out, err := eval(expr, env)
 		if err != nil {
 			return nil, err
 		}
@@ -134,9 +134,9 @@ func evalOr(args []interface{}) (interface{}, error) {
 }
 
 // (and (> 1 2) (> 3 4))
-func evalAnd(args []interface{}) (interface{}, error) {
+func evalAnd(args []interface{}, env envList) (interface{}, error) {
 	for _, expr := range args {
-		out, err := eval(expr)
+		out, err := eval(expr, env)
 		if err != nil {
 			return nil, err
 		}
@@ -154,7 +154,7 @@ func evalAnd(args []interface{}) (interface{}, error) {
 }
 
 // (define a 1)
-func evalDefine(args []interface{}) (interface{}, error) {
+func evalDefine(args []interface{}, env envList) (interface{}, error) {
 	if len(args) != 2 {
 		return nil, fmt.Errorf("malformed define")
 	}
@@ -164,12 +164,12 @@ func evalDefine(args []interface{}) (interface{}, error) {
 		return nil, fmt.Errorf("can't assign to non-name - %v", args[0])
 	}
 
-	val, err := eval(args[1])
+	val, err := eval(args[1], env)
 	if err != nil {
 		return nil, err
 	}
 
-	env[name] = val
+	env[0][name] = val
 	return nil, nil
 }
 
@@ -210,7 +210,7 @@ func readSExpr(tokens []string) (interface{}, []string, error) {
 	return tok, tokens, nil // name
 }
 
-type function func(values []interface{}) (interface{}, error)
+type function func(values []interface{}, env envList) (interface{}, error)
 
 func eval(sexpr interface{}, env envList) (interface{}, error) {
 	if name, ok := sexpr.(string); ok { // name
@@ -230,7 +230,7 @@ func eval(sexpr interface{}, env envList) (interface{}, error) {
 	if ok {
 		fn, ok := evalFuncs[name]
 		if ok {
-			return fn(rest)
+			return fn(rest, env)
 		}
 	}
 
@@ -253,7 +253,7 @@ func eval(sexpr interface{}, env envList) (interface{}, error) {
 		args = append(args, arg)
 	}
 
-	return fn(args)
+	return fn(args, env)
 }
 
 func repl() {
@@ -277,7 +277,7 @@ func repl() {
 			continue
 		}
 
-		val, err := eval(sexpr)
+		val, err := eval(sexpr, builtins)
 		if err != nil {
 			fmt.Printf("[eval error]: %s\n", err)
 			continue
