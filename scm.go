@@ -13,6 +13,7 @@ import (
 var (
 	commentRe = regexp.MustCompile(";.*$")
 	env       map[string]interface{}
+	evalFuncs map[string]evalFunc
 )
 
 func init() {
@@ -48,6 +49,10 @@ func init() {
 			return a != b, nil
 		}),
 	}
+
+	evalFuncs = map[string]evalFunc{
+		"if": evalIf,
+	}
 }
 
 func makeBinop(fn func(float64, float64) (interface{}, error)) function {
@@ -73,6 +78,33 @@ func tokenize(code string) []string {
 	code = strings.Replace(code, "(", " ( ", -1)
 	code = strings.Replace(code, ")", " )", -1)
 	return strings.Fields(code)
+}
+
+type evalFunc func(args []interface{}) (interface{}, error)
+
+func evalIf(args []interface{}) (interface{}, error) {
+	if len(args) < 2 || len(args) > 3 {
+		return nil, fmt.Errorf("malformed if")
+	}
+
+	val, err := eval(args[0])
+	if err != nil {
+		return nil, err
+	}
+
+	test, ok := val.(bool)
+	if !ok {
+		return nil, fmt.Errorf("no bool values as test")
+	}
+	if test {
+		return eval(args[1])
+	}
+
+	if len(args) == 3 { // has else part
+		return eval(args[2])
+	}
+
+	return nil, nil
 }
 
 func readSExpr(tokens []string) (interface{}, []string, error) {
@@ -128,17 +160,19 @@ func eval(sexpr interface{}) (interface{}, error) {
 	}
 
 	op, rest := list[0], list[1:]
+	name, ok := op.(string)
+	if ok {
+		fn, ok := evalFuncs[name]
+		if ok {
+			return fn(rest)
+		}
+	}
+
 	val, err := eval(op)
 	if err != nil {
 		return nil, err
 	}
-
-	name, ok := op.(string)
-	if ok {
-		switch name {
-		}
-	}
-
+	// function invocation
 	fn, ok := val.(function)
 	if !ok {
 		return nil, fmt.Errorf("%v is not a function", val)
