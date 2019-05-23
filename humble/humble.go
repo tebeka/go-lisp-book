@@ -13,7 +13,6 @@ import (
 var (
 	commentRe = regexp.MustCompile(";.*$")
 	builtins  envList
-	evalFuncs map[string]evalFunc
 )
 
 func init() {
@@ -48,15 +47,12 @@ func init() {
 		"!=": makeBinop(func(a, b float64) (interface{}, error) {
 			return a != b, nil
 		}),
+		"if":  function(evalIf),
+		"or":  function(evalOr),
+		"and": function(evalAnd),
 	}
 
 	builtins = envList{env}
-	evalFuncs = map[string]evalFunc{
-		"if":     evalIf,
-		"or":     evalOr,
-		"and":    evalAnd,
-		"define": evalDefine,
-	}
 }
 
 func makeBinop(fn func(float64, float64) (interface{}, error)) function {
@@ -83,8 +79,6 @@ func tokenize(code string) []string {
 	code = strings.Replace(code, ")", " )", -1)
 	return strings.Fields(code)
 }
-
-type evalFunc func(args []interface{}, env envList) (interface{}, error)
 
 // (if (> 2 1) 10 20)
 // (if (> 2 1) 10)
@@ -214,8 +208,9 @@ type function func(values []interface{}, env envList) (interface{}, error)
 
 func eval(sexpr interface{}, env envList) (interface{}, error) {
 	if name, ok := sexpr.(string); ok { // name
-		if value, ok := findBindings(name, env); ok {
-			return value, nil
+		e := findEnv(name, env)
+		if e != nil {
+			return e[name], nil
 		}
 		return nil, fmt.Errorf("unknown name - %s", name)
 	}
@@ -227,11 +222,9 @@ func eval(sexpr interface{}, env envList) (interface{}, error) {
 
 	op, rest := list[0], list[1:]
 	name, ok := op.(string)
-	if ok {
-		fn, ok := evalFuncs[name]
-		if ok {
-			return fn(rest, env)
-		}
+	// define is special since we create a new name
+	if ok && name == "define" {
+		return evalDefine(rest, env)
 	}
 
 	val, err := eval(op, env)
@@ -282,8 +275,23 @@ func repl() {
 			fmt.Printf("[eval error]: %s\n", err)
 			continue
 		}
-		fmt.Println(val)
+		if val != nil {
+			lispify(val, os.Stdout)
+			fmt.Println("")
+		}
 	}
+}
+
+func lispify(sexpr interface{}, out io.Writer) {
+	list, ok := sexpr.([]interface{})
+	if ok {
+		fmt.Fprintf(out, "(")
+		for _, e := range list {
+			lispify(e, out)
+		}
+		fmt.Fprintf(out, ")")
+	}
+	fmt.Fprintf(out, "%v", sexpr)
 }
 
 func printSExpr(sexpr interface{}, indent int) {
@@ -298,18 +306,23 @@ func printSExpr(sexpr interface{}, indent int) {
 
 type envList []map[string]interface{}
 
-func findBindings(name string, envs envList) (interface{}, bool) {
+func findEnv(name string, envs envList) map[string]interface{} {
 	for _, env := range envs {
-		if val, ok := env[name]; ok {
-			return val, ok
+		if _, ok := env[name]; ok {
+			return env
 		}
 	}
 
-	return nil, false
+	return nil
 }
 
 func main() {
 	fmt.Println("Welcome to Hubmle lisp (hit CTRL-D to quit)")
 	repl()
 	fmt.Println("\nCiao ☺")
+	/*
+		tokens := tokenize("(define x 1)")
+		sexpr, _, _ := readSExpr(tokens)
+		eval(sexpr, builtins)
+	*/
 }
