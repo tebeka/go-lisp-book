@@ -51,7 +51,9 @@ func init() {
 	}
 
 	evalFuncs = map[string]evalFunc{
-		"if": evalIf,
+		"if":  evalIf,
+		"or":  evalOr,
+		"and": evalAnd,
 	}
 }
 
@@ -105,6 +107,44 @@ func evalIf(args []interface{}) (interface{}, error) {
 	}
 
 	return nil, nil
+}
+
+func evalOr(args []interface{}) (interface{}, error) {
+	for _, expr := range args {
+		out, err := eval(expr)
+		if err != nil {
+			return nil, err
+		}
+
+		val, ok := out.(bool)
+		if !ok {
+			return nil, fmt.Errorf("bad boolean in or: %#v", out)
+		}
+		if val {
+			return true, nil
+		}
+	}
+
+	return false, nil
+}
+
+func evalAnd(args []interface{}) (interface{}, error) {
+	for _, expr := range args {
+		out, err := eval(expr)
+		if err != nil {
+			return nil, err
+		}
+
+		val, ok := out.(bool)
+		if !ok {
+			return nil, fmt.Errorf("bad boolean in or: %#v", out)
+		}
+		if !val {
+			return false, nil
+		}
+	}
+
+	return true, nil
 }
 
 func readSExpr(tokens []string) (interface{}, []string, error) {
