@@ -12,8 +12,61 @@ import (
 
 var (
 	commentRe = regexp.MustCompile(";.*$")
-	env       = make(map[string]interface{})
+	env       map[string]interface{}
 )
+
+func init() {
+	env = map[string]interface{}{
+		"+": makeBinop(func(a, b float64) (interface{}, error) {
+			return a + b, nil
+		}),
+		"-": makeBinop(func(a, b float64) (interface{}, error) {
+			return a - b, nil
+		}),
+		"*": makeBinop(func(a, b float64) (interface{}, error) {
+			return a * b, nil
+		}),
+		"/": makeBinop(func(a, b float64) (interface{}, error) {
+			return a / b, nil
+		}),
+		">": makeBinop(func(a, b float64) (interface{}, error) {
+			return a > b, nil
+		}),
+		">=": makeBinop(func(a, b float64) (interface{}, error) {
+			return a >= b, nil
+		}),
+		"<": makeBinop(func(a, b float64) (interface{}, error) {
+			return a < b, nil
+		}),
+		"<=": makeBinop(func(a, b float64) (interface{}, error) {
+			return a < b, nil
+		}),
+		"=": makeBinop(func(a, b float64) (interface{}, error) {
+			return a == b, nil
+		}),
+		"!=": makeBinop(func(a, b float64) (interface{}, error) {
+			return a != b, nil
+		}),
+	}
+}
+
+func makeBinop(fn func(float64, float64) (interface{}, error)) function {
+	return func(args []interface{}) (interface{}, error) {
+		if len(args) != 2 {
+			return nil, fmt.Errorf("wrong number of arguments")
+		}
+		lhs, ok := args[0].(float64)
+		if !ok {
+			return nil, fmt.Errorf("bad value - %v", args[0])
+		}
+		rhs, ok := args[1].(float64)
+		if !ok {
+			return nil, fmt.Errorf("bad value - %v", args[1])
+		}
+
+		return fn(lhs, rhs)
+	}
+}
 
 func tokenize(code string) []string {
 	code = commentRe.ReplaceAllString(code, "")
@@ -22,33 +75,24 @@ func tokenize(code string) []string {
 	return strings.Fields(code)
 }
 
-// SExpr is a node in evaluation tree
-type SExpr struct {
-	value    interface{}
-	children []*SExpr
-}
-
-func readSExpr(tokens []string) (*SExpr, []string, error) {
+func readSExpr(tokens []string) (interface{}, []string, error) {
 	var err error
 	if len(tokens) == 0 {
 		return nil, nil, io.EOF
 	}
 	tok, tokens := tokens[0], tokens[1:]
-	var sexpr SExpr
 	if tok == "(" {
-		var children []*SExpr
+		var sexpr []interface{}
 		for tokens[0] != ")" {
-			var child *SExpr
+			var child interface{}
 			child, tokens, err = readSExpr(tokens)
 			if err != nil {
 				return nil, nil, err
 			}
-			children = append(children, child)
+			sexpr = append(sexpr, child)
 		}
-		sexpr.value = children[0]
-		sexpr.children = children[1:]
 		tokens = tokens[1:] // remove closing ')'
-		return &sexpr, tokens, nil
+		return sexpr, tokens, nil
 	}
 
 	// TODO: file:line
@@ -63,125 +107,113 @@ func readSExpr(tokens []string) (*SExpr, []string, error) {
 
 	val, err := strconv.ParseFloat(tok, 64)
 	if err == nil {
-		sexpr.value = val
-	} else {
-		sexpr.value = tok
+		return val, tokens, nil
 	}
-
-	return &sexpr, tokens, nil
+	return tok, tokens, nil // name
 }
 
-func evalAtom(atom interface{}) (interface{}, error) {
-	if val, ok := atom.(float64); ok {
-		return val, nil
+type function func(values []interface{}) (interface{}, error)
+
+func eval(sexpr interface{}) (interface{}, error) {
+	if name, ok := sexpr.(string); ok { // name
+		if value, ok := env[name]; ok {
+			return value, nil
+		}
+		return nil, fmt.Errorf("unknown name - %s", name)
 	}
 
-	name, ok := atom.(string)
+	list, ok := sexpr.([]interface{})
 	if !ok {
-		return nil, fmt.Errorf("unkown atom type for %v - %T", atom, atom)
+		return sexpr, nil // atom
 	}
 
-	value, ok
-}
-
-func eval(s *SExpr) (interface{}, error) {
-	if len(s.children) == 0 { // atom
+	op, rest := list[0], list[1:]
+	val, err := eval(op)
+	if err != nil {
+		return nil, err
 	}
-	val, ok := s.value.(float64)
+
+	name, ok := op.(string)
 	if ok {
-		if len(s.children) > 0 {
-			return nil, fmt.Errorf("%s is not callable", s.value)
+		switch name {
 		}
-		return val, nil
 	}
 
-	name, ok := s.value.(string)
+	fn, ok := val.(function)
 	if !ok {
-		return nil, fmt.Errorf("unknown type - %T", s.value)
+		return nil, fmt.Errorf("%v is not a function", val)
 	}
 
-	val, ok := env[name]
-	if !ok {
-		return
+	var args []interface{}
+	for _, expr := range rest {
+		arg, err := eval(expr)
+		if err != nil {
+			return nil, err
+		}
+		args = append(args, arg)
 	}
 
-	if len(s.children) == 0 {
-		if val, ok := s.value.(float64); ok {
-			return val, nil
-		}
-
-		name, ok := s.value.(string)
-		if !ok {
-		}
-
-		val, ok := env[name]
-		if !ok {
-			return nil, fmt.Errorf("unknown name - %q", name)
-		}
-
-		return val, nil
-	}
-
-	val, ok := env[name]
-	if !ok {
-		if !ok {
-			return nil, fmt.Errorf("unknown name - %q", name)
-		}
-	}
+	return fn(args)
 }
 
 func repl() {
-	fmt.Printf("» ")
-	s := bufio.NewScanner(os.Stdin)
-	for s.Scan() {
-		tokens := tokenize(s.Text())
-		fmt.Println(tokens)
-		readSExpr(tokens)
+	rdr := bufio.NewReader(os.Stdin)
+	for {
 		fmt.Printf("» ")
-		/*
-			code, err := parse(s.Text())
-			if err != nil {
-				fmt.Printf("syntax error: %s\n", err)
-			}
+		text, err := rdr.ReadString('\n')
+		if err != nil {
+			break
+		}
 
-			val, err := code.Eval()
-			if err != nil {
-				fmt.Printf("eval error: %s\n", err)
-			}
-			fmt.Println(val)
-			fmt.Printf(">>> ")
-		*/
-	}
+		text = strings.TrimSpace(text)
+		if len(text) == 0 {
+			continue
+		}
 
-	switch s.Err() {
-	case io.EOF, nil:
-		// OK
-	default:
-		fmt.Printf("input error: %s\n", s.Err())
+		tokens := tokenize(text)
+		sexpr, _, err := readSExpr(tokens)
+		if err != nil {
+			fmt.Printf("[read error]: %s\n", err)
+			continue
+		}
+
+		val, err := eval(sexpr)
+		if err != nil {
+			fmt.Printf("[eval error]: %s\n", err)
+			continue
+		}
+		fmt.Println(val)
 	}
 }
 
-// Env is environment
-type Env struct {
-	bindings map[string]interface{}
-	parent   *Env
-}
-
-func printSExpr(s *SExpr, indent int) {
-	fmt.Printf("%*s", indent, " ")
-	fmt.Println(s.value)
-	for _, c := range s.children {
-		printSExpr(c, indent+4)
+func printSExpr(sexpr interface{}, indent int) {
+	if list, ok := sexpr.([]interface{}); ok {
+		for _, e := range list {
+			printSExpr(e, indent+2)
+		}
+		return
 	}
+	fmt.Printf("%*s%v\n", indent, " ", sexpr)
 }
 
 func main() {
-	code := "(* 3 6)"
-	tokens := tokenize(code)
-	sexpr, _, err := readSExpr(tokens)
-	if err != nil {
-		fmt.Printf("ERROR: %s", err)
-		os.Exit(1)
-	}
-	printSExpr(sexpr, 0)
+	fmt.Println("Welcome to Hubmle lisp (hit CTRL-D to quit)")
+	repl()
+	fmt.Println("\nCiao ☺")
+	/*
+		//code := "(+ 7 (* 3 6))"
+		code := "(+ (* 7 4) 3)"
+		tokens := tokenize(code)
+		sexpr, _, err := readSExpr(tokens)
+		if err != nil {
+			fmt.Printf("ERROR: %s", err)
+			os.Exit(1)
+		}
+		val, err := eval(sexpr)
+		if err != nil {
+			fmt.Printf("ERROR: %s", err)
+			os.Exit(1)
+		}
+		fmt.Println(val)
+	*/
 }
