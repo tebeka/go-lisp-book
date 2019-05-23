@@ -51,9 +51,10 @@ func init() {
 	}
 
 	evalFuncs = map[string]evalFunc{
-		"if":  evalIf,
-		"or":  evalOr,
-		"and": evalAnd,
+		"if":     evalIf,
+		"or":     evalOr,
+		"and":    evalAnd,
+		"define": evalDefine,
 	}
 }
 
@@ -84,6 +85,8 @@ func tokenize(code string) []string {
 
 type evalFunc func(args []interface{}) (interface{}, error)
 
+// (if (> 2 1) 10 20)
+// (if (> 2 1) 10)
 func evalIf(args []interface{}) (interface{}, error) {
 	if len(args) < 2 || len(args) > 3 {
 		return nil, fmt.Errorf("malformed if")
@@ -109,6 +112,7 @@ func evalIf(args []interface{}) (interface{}, error) {
 	return nil, nil
 }
 
+// (or (> 1 2) (> 3 4))
 func evalOr(args []interface{}) (interface{}, error) {
 	for _, expr := range args {
 		out, err := eval(expr)
@@ -128,6 +132,7 @@ func evalOr(args []interface{}) (interface{}, error) {
 	return false, nil
 }
 
+// (and (> 1 2) (> 3 4))
 func evalAnd(args []interface{}) (interface{}, error) {
 	for _, expr := range args {
 		out, err := eval(expr)
@@ -145,6 +150,26 @@ func evalAnd(args []interface{}) (interface{}, error) {
 	}
 
 	return true, nil
+}
+
+// (define a 1)
+func evalDefine(args []interface{}) (interface{}, error) {
+	if len(args) != 2 {
+		return nil, fmt.Errorf("malformed define")
+	}
+
+	name, ok := args[0].(string)
+	if !ok {
+		return nil, fmt.Errorf("can't assign to non-name - %v", args[0])
+	}
+
+	val, err := eval(args[1])
+	if err != nil {
+		return nil, err
+	}
+
+	env[name] = val
+	return nil, nil
 }
 
 func readSExpr(tokens []string) (interface{}, []string, error) {
@@ -274,20 +299,4 @@ func main() {
 	fmt.Println("Welcome to Hubmle lisp (hit CTRL-D to quit)")
 	repl()
 	fmt.Println("\nCiao ☺")
-	/*
-		//code := "(+ 7 (* 3 6))"
-		code := "(+ (* 7 4) 3)"
-		tokens := tokenize(code)
-		sexpr, _, err := readSExpr(tokens)
-		if err != nil {
-			fmt.Printf("ERROR: %s", err)
-			os.Exit(1)
-		}
-		val, err := eval(sexpr)
-		if err != nil {
-			fmt.Printf("ERROR: %s", err)
-			os.Exit(1)
-		}
-		fmt.Println(val)
-	*/
 }
