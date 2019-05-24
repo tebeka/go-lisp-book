@@ -36,6 +36,64 @@ func init() {
 	builtins = envList{env}
 }
 
+func tokenize(code string) []string {
+	code = commentRe.ReplaceAllString(code, "")
+	code = strings.Replace(code, "(", " ( ", -1)
+	code = strings.Replace(code, ")", " )", -1)
+	return strings.Fields(code)
+}
+
+func readSExpr(tokens []string) (interface{}, []string, error) {
+	var err error
+	if len(tokens) == 0 {
+		return nil, nil, io.EOF
+	}
+	tok, tokens := tokens[0], tokens[1:]
+	if tok == "(" {
+		var sexpr []interface{}
+		for len(tokens) > 0 && tokens[0] != ")" {
+			var child interface{}
+			child, tokens, err = readSExpr(tokens)
+			if err != nil {
+				return nil, nil, err
+			}
+			sexpr = append(sexpr, child)
+		}
+		if len(tokens) == 0 {
+			return nil, nil, fmt.Errorf("unbalanced expression")
+		}
+		tokens = tokens[1:] // remove closing ')'
+		return sexpr, tokens, nil
+	}
+
+	switch tok {
+	case ")": // TODO: file:line
+		return nil, nil, fmt.Errorf("unexpected ')'")
+	case "true":
+		return true, tokens, nil
+	case "false":
+		return false, tokens, nil
+	}
+
+	val, err := strconv.ParseFloat(tok, 64)
+	if err == nil {
+		return val, tokens, nil
+	}
+	return tok, tokens, nil // name
+}
+
+type envList []map[string]interface{}
+
+func findEnv(name string, envs envList) map[string]interface{} {
+	for _, env := range envs {
+		if _, ok := env[name]; ok {
+			return env
+		}
+	}
+
+	return nil
+}
+
 type callable interface {
 	call([]interface{}, envList) (interface{}, error)
 }
@@ -65,13 +123,6 @@ func (b *binOp) call(args []interface{}, env envList) (interface{}, error) {
 
 func (b *binOp) String() string {
 	return b.name
-}
-
-func tokenize(code string) []string {
-	code = commentRe.ReplaceAllString(code, "")
-	code = strings.Replace(code, "(", " ( ", -1)
-	code = strings.Replace(code, ")", " )", -1)
-	return strings.Fields(code)
 }
 
 type ifExpr struct{}
@@ -226,20 +277,20 @@ func (e *lambdaExpr) call(args []interface{}, env envList) (interface{}, error) 
 func (e *lambdaExpr) String() string {
 	var buf bytes.Buffer
 	params := strings.Join(e.params, " ")
-	printExpr(e.body, &buf)
+	printLambda(e.body, &buf)
 	return fmt.Sprintf("(lambda (%s) (%s)", params, buf.String())
 }
 
-func printExpr(expr interface{}, w io.Writer) {
-	list, ok := expr.([]interface{})
+func printLambda(body interface{}, w io.Writer) {
+	list, ok := body.([]interface{})
 	if !ok {
-		fmt.Fprintf(w, "%v", expr)
+		fmt.Fprintf(w, "%v", body)
 		return
 	}
 
 	fmt.Fprintf(w, "(")
 	for i, child := range list {
-		printExpr(child, w)
+		printLambda(child, w)
 		if i < len(list)-1 {
 			fmt.Fprintf(w, " ")
 		}
@@ -274,46 +325,6 @@ func makeLambda(args []interface{}, env envList) (interface{}, error) {
 		env:    env,
 	}
 	return lambda, nil
-}
-
-func readSExpr(tokens []string) (interface{}, []string, error) {
-	var err error
-	if len(tokens) == 0 {
-		return nil, nil, io.EOF
-	}
-	tok, tokens := tokens[0], tokens[1:]
-	if tok == "(" {
-		var sexpr []interface{}
-		for len(tokens) > 0 && tokens[0] != ")" {
-			var child interface{}
-			child, tokens, err = readSExpr(tokens)
-			if err != nil {
-				return nil, nil, err
-			}
-			sexpr = append(sexpr, child)
-		}
-		if len(tokens) == 0 {
-			return nil, nil, fmt.Errorf("unbalanced expression")
-		}
-		tokens = tokens[1:] // remove closing ')'
-		return sexpr, tokens, nil
-	}
-
-	// TODO: file:line
-	if tok == ")" {
-		return nil, nil, fmt.Errorf("unexpected ')'")
-	}
-
-	/*
-	   if tok in {'#t', '#f'}:
-	       return tok == '#t'
-	*/
-
-	val, err := strconv.ParseFloat(tok, 64)
-	if err == nil {
-		return val, tokens, nil
-	}
-	return tok, tokens, nil // name
 }
 
 func eval(sexpr interface{}, env envList) (interface{}, error) {
@@ -397,18 +408,6 @@ func repl() {
 			fmt.Println(val)
 		}
 	}
-}
-
-type envList []map[string]interface{}
-
-func findEnv(name string, envs envList) map[string]interface{} {
-	for _, env := range envs {
-		if _, ok := env[name]; ok {
-			return env
-		}
-	}
-
-	return nil
 }
 
 func main() {
