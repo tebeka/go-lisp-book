@@ -384,16 +384,6 @@ func lispify(sexpr interface{}, out io.Writer) {
 	fmt.Fprintf(out, "%v", sexpr)
 }
 
-func printSExpr(sexpr interface{}, indent int) {
-	if list, ok := sexpr.([]interface{}); ok {
-		for _, e := range list {
-			printSExpr(e, indent+2)
-		}
-		return
-	}
-	fmt.Printf("%*s%v\n", indent, " ", sexpr)
-}
-
 type envList []map[string]interface{}
 
 func findEnv(name string, envs envList) map[string]interface{} {
