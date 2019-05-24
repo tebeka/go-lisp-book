@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"fmt"
 	"io"
 	"os"
@@ -222,6 +223,30 @@ func (e *lambdaExpr) call(args []interface{}, env envList) (interface{}, error) 
 	return eval(e.body, env)
 }
 
+func (e *lambdaExpr) String() string {
+	var buf bytes.Buffer
+	params := strings.Join(e.params, " ")
+	printExpr(e.body, &buf)
+	return fmt.Sprintf("(lambda (%s) (%s)", params, buf.String())
+}
+
+func printExpr(expr interface{}, w io.Writer) {
+	list, ok := expr.([]interface{})
+	if !ok {
+		fmt.Fprintf(w, "%v", expr)
+		return
+	}
+
+	fmt.Fprintf(w, "(")
+	for i, child := range list {
+		printExpr(child, w)
+		if i < len(list)-1 {
+			fmt.Fprintf(w, " ")
+		}
+	}
+	fmt.Fprintf(w, ")")
+}
+
 // (lambda (a b) (+ a b))
 func makeLambda(args []interface{}, env envList) (interface{}, error) {
 	if len(args) != 2 {
@@ -259,13 +284,16 @@ func readSExpr(tokens []string) (interface{}, []string, error) {
 	tok, tokens := tokens[0], tokens[1:]
 	if tok == "(" {
 		var sexpr []interface{}
-		for tokens[0] != ")" {
+		for len(tokens) > 0 && tokens[0] != ")" {
 			var child interface{}
 			child, tokens, err = readSExpr(tokens)
 			if err != nil {
 				return nil, nil, err
 			}
 			sexpr = append(sexpr, child)
+		}
+		if len(tokens) == 0 {
+			return nil, nil, fmt.Errorf("unbalanced expression")
 		}
 		tokens = tokens[1:] // remove closing ')'
 		return sexpr, tokens, nil
@@ -366,22 +394,9 @@ func repl() {
 			continue
 		}
 		if val != nil {
-			lispify(val, os.Stdout)
-			fmt.Println("")
+			fmt.Println(val)
 		}
 	}
-}
-
-func lispify(sexpr interface{}, out io.Writer) {
-	list, ok := sexpr.([]interface{})
-	if ok {
-		fmt.Fprintf(out, "(")
-		for _, e := range list {
-			lispify(e, out)
-		}
-		fmt.Fprintf(out, ")")
-	}
-	fmt.Fprintf(out, "%v", sexpr)
 }
 
 type envList []map[string]interface{}
@@ -400,9 +415,4 @@ func main() {
 	fmt.Println("Welcome to Hubmle lisp (hit CTRL-D to quit)")
 	repl()
 	fmt.Println("\nCiao ☺")
-	/*
-		tokens := tokenize("(define x 1)")
-		sexpr, _, _ := readSExpr(tokens)
-		eval(sexpr, builtins)
-	*/
 }
