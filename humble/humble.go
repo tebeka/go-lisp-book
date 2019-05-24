@@ -158,23 +158,48 @@ func (e andExpr) String() string {
 	return "and"
 }
 
-// (define a 1)
-func evalDefine(args []interface{}, env envList) (interface{}, error) {
+func nameVal(op string, args []interface{}, env envList) (string, interface{}, error) {
 	if len(args) != 2 {
-		return nil, fmt.Errorf("malformed define")
+		return "", nil, fmt.Errorf("malformed %s", op)
 	}
 
 	name, ok := args[0].(string)
 	if !ok {
-		return nil, fmt.Errorf("can't assign to non-name - %v", args[0])
+		return "", nil, fmt.Errorf("can't assign to non-name - %v", args[0])
 	}
 
 	val, err := eval(args[1], env)
+	if err != nil {
+		return "", nil, err
+	}
+
+	return name, val, nil
+}
+
+// (define a 1)
+func evalDefine(args []interface{}, env envList) (interface{}, error) {
+	name, val, err := nameVal("define", args, env)
 	if err != nil {
 		return nil, err
 	}
 
 	env[0][name] = val
+	return nil, nil
+}
+
+// (set! a 1)
+func evalSet(args []interface{}, env envList) (interface{}, error) {
+	name, val, err := nameVal("set!", args, env)
+	if err != nil {
+		return nil, err
+	}
+
+	e := findEnv(name, env)
+	if e == nil {
+		return nil, fmt.Errorf("unknown variable - %s", name)
+	}
+
+	e[name] = val
 	return nil, nil
 }
 
@@ -279,13 +304,16 @@ func eval(sexpr interface{}, env envList) (interface{}, error) {
 
 	op, rest := list[0], list[1:]
 	name, ok := op.(string)
-	// define & lambda are special cases
+
+	// Special cases
 	if ok {
 		switch name {
 		case "define":
 			return evalDefine(rest, env)
 		case "lambda":
 			return makeLambda(rest, env)
+		case "set!":
+			return evalSet(rest, env)
 		}
 	}
 
