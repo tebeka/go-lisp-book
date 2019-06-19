@@ -78,12 +78,15 @@ func tokenize(code string) []Token {
 	return tokens
 }
 
+// Expression to be computed
 type Expression interface {
 	Eval(env Environment) (Object, error)
 }
 
+// Object in the language
 type Object interface{}
 
+// NumberExpr is a number. e.g. 3.14
 type NumberExpr struct {
 	value float64
 }
@@ -92,10 +95,12 @@ func (e *NumberExpr) String() string {
 	return fmt.Sprintf("%v", e.value)
 }
 
+// Eval evaluates value
 func (e *NumberExpr) Eval(env Environment) (Object, error) {
 	return e.value, nil
 }
 
+// SymbolExpr is a symbol. e.g. pi
 type SymbolExpr struct {
 	name string
 }
@@ -104,6 +109,7 @@ func (e *SymbolExpr) String() string {
 	return fmt.Sprintf("%v", e.name)
 }
 
+// Eval evaluates value
 func (e *SymbolExpr) Eval(env Environment) (Object, error) {
 	scope := env.Find(e.name)
 	if scope == nil {
@@ -113,6 +119,7 @@ func (e *SymbolExpr) Eval(env Environment) (Object, error) {
 	return scope[e.name], nil
 }
 
+// ListExpr is a list expression. e.g. (* 4 5)
 type ListExpr struct {
 	children []Expression
 }
@@ -130,6 +137,7 @@ func (e *ListExpr) String() string {
 	return buf.String()
 }
 
+// Eval evaluates value
 func (e *ListExpr) Eval(env Environment) (Object, error) {
 	if len(e.children) == 0 {
 		return nil, fmt.Errorf("empty list expression")
@@ -305,16 +313,20 @@ func evalLambda(args []Expression, env Environment) (Object, error) {
 	return obj, nil
 }
 
+// Callable object
 type Callable interface {
 	Call(args []Object) (Object, error)
 }
 
+// Function object
 type Function func(args []Object) (Object, error)
 
+// Call implements Callable
 func (f Function) Call(args []Object) (Object, error) {
 	return f(args)
 }
 
+// Plus function. e.g. (+ 1 2 3)
 func Plus(args []Object) (Object, error) {
 	total := 0.0
 	for i, arg := range args {
@@ -328,6 +340,7 @@ func Plus(args []Object) (Object, error) {
 	return total, nil
 }
 
+// Mul function. e.g. (* 1 2 3)
 func Mul(args []Object) (Object, error) {
 	total := 1.0
 	for i, arg := range args {
@@ -341,6 +354,7 @@ func Mul(args []Object) (Object, error) {
 	return total, nil
 }
 
+// Begin function. e.g. (begin (* 3 4) (/ 5 7))
 func Begin(args []Object) (Object, error) {
 	if len(args) == 0 {
 		return 0.0, nil
@@ -349,11 +363,13 @@ func Begin(args []Object) (Object, error) {
 	return args[len(args)-1], nil
 }
 
+// BinOp is a binary (two argument) operator/function
 type BinOp struct {
 	name string
 	op   func(float64, float64) (Object, error)
 }
 
+// Call implement Callable
 func (bo *BinOp) Call(args []Object) (Object, error) {
 	if len(args) != 2 {
 		return nil, bo.errorf("wrong number of arguments (want 2, got %d)", len(args))
@@ -382,12 +398,14 @@ func (bo *BinOp) errorf(format string, args ...interface{}) error {
 	return fmt.Errorf("%s - %s", bo.name, msg)
 }
 
+// Lambda is a lambda object. e.g. (lambda (n) (+ n 1))
 type Lambda struct {
 	env    Environment
 	params []string
 	body   Expression
 }
 
+// Call implements Callable
 func (l *Lambda) Call(args []Object) (Object, error) {
 	if len(args) != len(l.params) {
 		return nil, fmt.Errorf("wrong number of arguments (want %d, got %d)", len(l.params), args)
@@ -411,6 +429,7 @@ func (l *Lambda) String() string {
 	return buf.String()
 }
 
+// ReadExpr reads an expression from slice of tokens
 func ReadExpr(tokens []Token) (Expression, []Token, error) {
 	var err error
 	if len(tokens) == 0 {
@@ -450,8 +469,10 @@ func ReadExpr(tokens []Token) (Expression, []Token, error) {
 	return &SymbolExpr{lit}, tokens, nil // name
 }
 
+// Environment holds name → values
 type Environment []map[string]Object
 
+// Find finds the environment holding name, return nil if not found
 func (e Environment) Find(name string) map[string]Object {
 	for i := len(e) - 1; i >= 0; i-- {
 		if _, ok := e[i][name]; ok {
