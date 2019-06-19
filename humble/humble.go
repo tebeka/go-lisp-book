@@ -22,7 +22,7 @@ func init() {
 			name: "%",
 			op: func(a, b float64) (Object, error) {
 				if b == 0 {
-					return nil, fmt.Errorf("mod: zero division")
+					return nil, fmt.Errorf("division by zero")
 				}
 				return float64(int(a) % int(b)), nil
 			},
@@ -35,6 +35,15 @@ func init() {
 					val = 1
 				}
 				return val, nil
+			},
+		},
+		"/": &BinOp{
+			name: "/",
+			op: func(a, b float64) (Object, error) {
+				if b == 0 {
+					return nil, fmt.Errorf("division by zero")
+				}
+				return a / b, nil
 			},
 		},
 	})
@@ -254,7 +263,12 @@ func (bo *BinOp) Call(args []Object) (Object, error) {
 		return nil, fmt.Errorf("%s: bad type for second argument - %T", bo.name, args[0])
 	}
 
-	return bo.op(a, b)
+	val, err := bo.op(a, b)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %s", bo.name, err)
+	}
+
+	return val, nil
 }
 
 type Lambda struct {
