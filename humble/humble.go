@@ -16,8 +16,9 @@ var (
 
 func init() {
 	builtins = append(builtins, map[string]Object{
-		"+": Function(Plus),
-		"*": Function(Mul),
+		"+":     Function(Plus),
+		"*":     Function(Mul),
+		"begin": Function(Begin),
 		"%": &BinOp{
 			name: "%",
 			op: func(a, b float64) (Object, error) {
@@ -37,6 +38,15 @@ func init() {
 				return val, nil
 			},
 		},
+		"<": &BinOp{
+			name: "<",
+			op: func(a, b float64) (Object, error) {
+				if a < b {
+					return 1.0, nil
+				}
+				return 0.0, nil
+			},
+		},
 		"/": &BinOp{
 			name: "/",
 			op: func(a, b float64) (Object, error) {
@@ -44,6 +54,12 @@ func init() {
 					return nil, fmt.Errorf("division by zero")
 				}
 				return a / b, nil
+			},
+		},
+		"-": &BinOp{
+			name: "-",
+			op: func(a, b float64) (Object, error) {
+				return a - b, nil
 			},
 		},
 	})
@@ -119,39 +135,41 @@ func (e *ListExpr) Eval(env Environment) (Object, error) {
 		return nil, fmt.Errorf("empty list expression")
 	}
 
+	rest := e.children[1:]
+
+	// Try special forms first
 	ne, ok := e.children[0].(*SymbolExpr)
-	if !ok {
-		return nil, fmt.Errorf("%v starting list expression", e.children[0])
+	if ok {
+		op := ne.name
+
+		switch op {
+		case "define": // (define n 27)
+			return evalDefine(rest, env)
+		case "set!": // (set! n 27)
+			return evalSet(rest, env)
+		case "if": // (if (< x 0) 0 x)
+			return evalIf(rest, env)
+		case "or": // (or), (or 0 1)
+			return evalOr(rest, env)
+		case "and": // (and), (and 0 1)
+			return evalAnd(rest, env)
+		case "lambda": // (lambda (n) (+ n 1))
+			return evalLambda(rest, env)
+		}
 	}
 
-	op := ne.name
-	args := e.children[1:]
-
-	switch op {
-	case "define": // (define n 27)
-		return evalDefine(args, env)
-	case "set!": // (set! n 27)
-		return evalSet(args, env)
-	case "if": // (if (< x 0) 0 x)
-		return evalIf(args, env)
-	case "lambda": // (lambda (n) (+ n 1))
-		return evalLambda(args, env)
+	obj, err := e.children[0].Eval(env)
+	if err != nil {
+		return nil, err
 	}
-
-	// Function call
-	scope := env.Find(op)
-	if scope == nil {
-		return nil, fmt.Errorf("unknown name - %s", op)
-	}
-	obj := scope[op]
 
 	c, ok := obj.(Callable)
 	if !ok {
-		return nil, fmt.Errorf("%s (%T) is not callabled", op, obj)
+		return nil, fmt.Errorf("%s is not callabled", obj)
 	}
 
 	var params []Object
-	for _, e := range args {
+	for _, e := range rest {
 		obj, err := e.Eval(env)
 		if err != nil {
 			return nil, err
@@ -220,6 +238,47 @@ func evalIf(args []Expression, env Environment) (Object, error) {
 	return args[2].Eval(env)
 }
 
+func evalOr(args []Expression, env Environment) (Object, error) {
+	for _, e := range args {
+		obj, err := e.Eval(env)
+		if err != nil {
+			return nil, err
+		}
+
+		val, ok := obj.(float64)
+		if !ok {
+			return nil, fmt.Errorf("or - %v bad type %T", val, val)
+		}
+
+		if val != 0.0 {
+			return val, nil
+		}
+	}
+
+	return 0.0, nil
+}
+
+func evalAnd(args []Expression, env Environment) (Object, error) {
+	val, ok := 1.0, false
+	for _, e := range args {
+		obj, err := e.Eval(env)
+		if err != nil {
+			return nil, err
+		}
+
+		val, ok = obj.(float64)
+		if !ok {
+			return nil, fmt.Errorf("or - %v bad type %T", val, val)
+		}
+
+		if val == 0.0 {
+			return val, nil
+		}
+	}
+
+	return val, nil
+}
+
 func evalLambda(args []Expression, env Environment) (Object, error) {
 	if len(args) != 2 {
 		return nil, fmt.Errorf("malformed lambda")
@@ -280,6 +339,14 @@ func Mul(args []Object) (Object, error) {
 	}
 
 	return total, nil
+}
+
+func Begin(args []Object) (Object, error) {
+	if len(args) == 0 {
+		return 0.0, nil
+	}
+
+	return args[len(args)-1], nil
 }
 
 type BinOp struct {
