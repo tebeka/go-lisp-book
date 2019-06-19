@@ -6,376 +6,237 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"regexp"
 	"strconv"
 	"strings"
 )
 
 var (
-	commentRe = regexp.MustCompile(";.*$")
-	builtins  envList
+	builtins = map[string]Object{
+		"+": Function(Plus),
+		"mod": &BinOp{
+			name: "mod",
+			op: func(a, b float64) (Object, error) {
+				if b == 0 {
+					return nil, fmt.Errorf("mod: zero division")
+				}
+				return float64(int(a) % int(b)), nil
+			},
+		},
+		"eq?": &BinOp{
+			name: "eq?",
+			op: func(a, b float64) (Object, error) {
+				var val float64
+				if a == b {
+					val = 1
+				}
+				return val, nil
+			},
+		},
+	}
 )
 
-func init() {
-	env := map[string]interface{}{
-		"+":   &binOp{"+", func(a, b float64) interface{} { return a + b }},
-		"-":   &binOp{"-", func(a, b float64) interface{} { return a - b }},
-		"*":   &binOp{"*", func(a, b float64) interface{} { return a * b }},
-		"/":   &binOp{"/", func(a, b float64) interface{} { return a / b }},
-		">":   &binOp{">", func(a, b float64) interface{} { return a > b }},
-		">=":  &binOp{">=", func(a, b float64) interface{} { return a >= b }},
-		"<":   &binOp{"<", func(a, b float64) interface{} { return a < b }},
-		"<=":  &binOp{"<=", func(a, b float64) interface{} { return a <= b }},
-		"=":   &binOp{"=", func(a, b float64) interface{} { return a == b }},
-		"!=":  &binOp{"!=", func(a, b float64) interface{} { return a != b }},
-		"if":  ifExpr{},
-		"or":  orExpr{},
-		"and": andExpr{},
-	}
+// Token in the language
+type Token string
 
-	builtins = envList{env}
-}
-
-func tokenize(code string) []string {
-	code = commentRe.ReplaceAllString(code, "")
+func tokenize(code string) []Token {
 	code = strings.Replace(code, "(", " ( ", -1)
 	code = strings.Replace(code, ")", " )", -1)
-	return strings.Fields(code)
+	var tokens []Token
+	for _, tok := range strings.Fields(code) {
+		tokens = append(tokens, Token(tok))
+	}
+	return tokens
 }
 
-func readSExpr(tokens []string) (interface{}, []string, error) {
+type Expression interface {
+	Eval() (Object, error)
+}
+
+type Object interface{}
+
+type NumberExpr struct {
+	value float64
+}
+
+func (e *NumberExpr) String() string {
+	return fmt.Sprintf("%v", e.value)
+}
+
+func (e *NumberExpr) Eval() (Object, error) {
+	return e.value, nil
+}
+
+type NameExpr struct {
+	name string
+}
+
+func (e *NameExpr) String() string {
+	return fmt.Sprintf("%v", e.name)
+}
+
+func (e *NameExpr) Eval() (Object, error) {
+	val, ok := builtins[e.name]
+	if !ok {
+		return nil, fmt.Errorf("unknown name - %q", e.name)
+	}
+
+	return val, nil
+}
+
+type ListExpr struct {
+	children []Expression
+}
+
+func (e *ListExpr) String() string {
+	var buf bytes.Buffer
+	fmt.Fprintf(&buf, "(")
+	for i, c := range e.children {
+		fmt.Fprintf(&buf, "%s", c)
+		if i < len(e.children)-1 {
+			fmt.Fprintf(&buf, " ")
+		}
+	}
+	fmt.Fprintf(&buf, ")")
+	return buf.String()
+}
+
+func (e *ListExpr) Eval() (Object, error) {
+	if len(e.children) == 0 {
+		return nil, fmt.Errorf("empty list expression")
+	}
+
+	ne, ok := e.children[0].(*NameExpr)
+	if !ok {
+		return nil, fmt.Errorf("%v starting list expression", e.children[0])
+	}
+
+	op := ne.name
+	args := e.children[1:]
+
+	switch op {
+	case "define":
+		if len(args) != 2 {
+			return nil, fmt.Errorf("wrong number of arguments for 'define'")
+		}
+
+		arg0, ok := args[0].(*NameExpr)
+		if !ok {
+			return nil, fmt.Errorf("bad name in 'define'")
+		}
+
+		val, err := args[1].Eval()
+		if err != nil {
+			return nil, err
+		}
+		builtins[arg0.name] = val
+		return val, nil
+	}
+
+	obj, ok := builtins[op]
+	if !ok {
+		return nil, fmt.Errorf("unknown name - %s", op)
+	}
+
+	c, ok := obj.(Callable)
+	if !ok {
+		return nil, fmt.Errorf("%s (%T) is not callabled", op, obj)
+	}
+
+	var params []Object
+	for _, e := range args {
+		obj, err := e.Eval()
+		if err != nil {
+			return nil, err
+		}
+		params = append(params, obj)
+	}
+
+	return c.Call(params)
+}
+
+type Callable interface {
+	Call(args []Object) (Object, error)
+}
+
+type Function func(args []Object) (Object, error)
+
+func (f Function) Call(args []Object) (Object, error) {
+	return f(args)
+}
+
+func Plus(args []Object) (Object, error) {
+	total := 0.0
+	for i, arg := range args {
+		fval, ok := arg.(float64)
+		if !ok {
+			return nil, fmt.Errorf("%d bad argument: %v of %T", i, args, arg)
+		}
+		total += fval
+	}
+
+	return total, nil
+}
+
+type BinOp struct {
+	name string
+	op   func(float64, float64) (Object, error)
+}
+
+func (bo *BinOp) Call(args []Object) (Object, error) {
+	if len(args) != 2 {
+		return nil, fmt.Errorf("%s: wrong number of arguments (want 2, got %d)", bo.name, len(args))
+	}
+
+	a, ok := args[0].(float64)
+	if !ok {
+		return nil, fmt.Errorf("%s: bad type for first argument - %T", bo.name, args[0])
+	}
+
+	b, ok := args[1].(float64)
+	if !ok {
+		return nil, fmt.Errorf("%s: bad type for second argument - %T", bo.name, args[0])
+	}
+
+	return bo.op(a, b)
+}
+
+func ReadExpr(tokens []Token) (Expression, []Token, error) {
 	var err error
 	if len(tokens) == 0 {
 		return nil, nil, io.EOF
 	}
+
 	tok, tokens := tokens[0], tokens[1:]
 	if tok == "(" {
-		var sexpr []interface{}
+		var children []Expression
 		for len(tokens) > 0 && tokens[0] != ")" {
-			var child interface{}
-			child, tokens, err = readSExpr(tokens)
+			var child Expression
+			child, tokens, err = ReadExpr(tokens)
 			if err != nil {
 				return nil, nil, err
 			}
-			sexpr = append(sexpr, child)
+			children = append(children, child)
 		}
+
 		if len(tokens) == 0 {
 			return nil, nil, fmt.Errorf("unbalanced expression")
 		}
+
 		tokens = tokens[1:] // remove closing ')'
-		return sexpr, tokens, nil
+		return &ListExpr{children}, tokens, nil
 	}
 
 	switch tok {
 	case ")": // TODO: file:line
 		return nil, nil, fmt.Errorf("unexpected ')'")
-	case "true":
-		return true, tokens, nil
-	case "false":
-		return false, tokens, nil
 	}
 
-	val, err := strconv.ParseFloat(tok, 64)
+	lit := string(tok)
+	val, err := strconv.ParseFloat(lit, 64)
 	if err == nil {
-		return val, tokens, nil
+		return &NumberExpr{val}, tokens, nil
 	}
-	return tok, tokens, nil // name
-}
-
-type envList []map[string]interface{}
-
-func findEnv(name string, envs envList) map[string]interface{} {
-	for _, env := range envs {
-		if _, ok := env[name]; ok {
-			return env
-		}
-	}
-
-	return nil
-}
-
-type callable interface {
-	call([]interface{}, envList) (interface{}, error)
-}
-
-type binOp struct {
-	name string
-	fn   func(float64, float64) interface{}
-}
-
-func (b *binOp) call(args []interface{}, env envList) (interface{}, error) {
-	if len(args) != 2 {
-		return nil, fmt.Errorf("wrong number of arguments")
-	}
-
-	lhs, ok := args[0].(float64)
-	if !ok {
-		return nil, fmt.Errorf("lhs type error, got %v of type %T", args[0], args[0])
-	}
-
-	rhs, ok := args[1].(float64)
-	if !ok {
-		return nil, fmt.Errorf("rhs type error, got %v of type %T", args[1], args[1])
-	}
-
-	return b.fn(lhs, rhs), nil
-}
-
-func (b *binOp) String() string {
-	return b.name
-}
-
-type ifExpr struct{}
-
-// (if (> 2 1) 10 20)
-// (if (> 2 1) 10)
-func (e ifExpr) call(args []interface{}, env envList) (interface{}, error) {
-	if len(args) < 2 || len(args) > 3 {
-		return nil, fmt.Errorf("malformed if")
-	}
-
-	val, err := eval(args[0], env)
-	if err != nil {
-		return nil, err
-	}
-
-	test, ok := val.(bool)
-	if !ok {
-		return nil, fmt.Errorf("no bool values as test")
-	}
-	if test {
-		return eval(args[1], env)
-	}
-
-	if len(args) == 3 { // has else part
-		return eval(args[2], env)
-	}
-
-	return nil, nil
-}
-
-func (e ifExpr) String() string {
-	return "if"
-}
-
-type orExpr struct{}
-
-// (or (> 1 2) (> 3 4))
-func (e orExpr) call(args []interface{}, env envList) (interface{}, error) {
-	for _, expr := range args {
-		out, err := eval(expr, env)
-		if err != nil {
-			return nil, err
-		}
-
-		val, ok := out.(bool)
-		if !ok {
-			return nil, fmt.Errorf("bad boolean in or: %#v", out)
-		}
-		if val {
-			return true, nil
-		}
-	}
-
-	return false, nil
-}
-
-func (e orExpr) String() string {
-	return "or"
-}
-
-type andExpr struct{}
-
-// (and (> 1 2) (> 3 4))
-func (e andExpr) call(args []interface{}, env envList) (interface{}, error) {
-	for _, expr := range args {
-		out, err := eval(expr, env)
-		if err != nil {
-			return nil, err
-		}
-
-		val, ok := out.(bool)
-		if !ok {
-			return nil, fmt.Errorf("bad boolean in or: %#v", out)
-		}
-		if !val {
-			return false, nil
-		}
-	}
-
-	return true, nil
-}
-
-func (e andExpr) String() string {
-	return "and"
-}
-
-func nameVal(op string, args []interface{}, env envList) (string, interface{}, error) {
-	if len(args) != 2 {
-		return "", nil, fmt.Errorf("malformed %s", op)
-	}
-
-	name, ok := args[0].(string)
-	if !ok {
-		return "", nil, fmt.Errorf("can't assign to non-name - %v", args[0])
-	}
-
-	val, err := eval(args[1], env)
-	if err != nil {
-		return "", nil, err
-	}
-
-	return name, val, nil
-}
-
-// (define a 1)
-func evalDefine(args []interface{}, env envList) (interface{}, error) {
-	name, val, err := nameVal("define", args, env)
-	if err != nil {
-		return nil, err
-	}
-
-	env[0][name] = val
-	return nil, nil
-}
-
-// (set! a 1)
-func evalSet(args []interface{}, env envList) (interface{}, error) {
-	name, val, err := nameVal("set!", args, env)
-	if err != nil {
-		return nil, err
-	}
-
-	e := findEnv(name, env)
-	if e == nil {
-		return nil, fmt.Errorf("unknown variable - %s", name)
-	}
-
-	e[name] = val
-	return nil, nil
-}
-
-type lambdaExpr struct {
-	params []string
-	body   interface{}
-	env    envList
-}
-
-func (e *lambdaExpr) call(args []interface{}, env envList) (interface{}, error) {
-	if len(args) != len(e.params) {
-		return nil, fmt.Errorf("wrong number of arguments")
-	}
-
-	locals := make(map[string]interface{})
-	for i, param := range e.params {
-		locals[param] = args[i]
-	}
-	env = append(env, locals)
-	return eval(e.body, env)
-}
-
-func (e *lambdaExpr) String() string {
-	var buf bytes.Buffer
-	params := strings.Join(e.params, " ")
-	printLambda(e.body, &buf)
-	return fmt.Sprintf("(lambda (%s) (%s)", params, buf.String())
-}
-
-func printLambda(body interface{}, w io.Writer) {
-	list, ok := body.([]interface{})
-	if !ok {
-		fmt.Fprintf(w, "%v", body)
-		return
-	}
-
-	fmt.Fprintf(w, "(")
-	for i, child := range list {
-		printLambda(child, w)
-		if i < len(list)-1 {
-			fmt.Fprintf(w, " ")
-		}
-	}
-	fmt.Fprintf(w, ")")
-}
-
-// (lambda (a b) (+ a b))
-func makeLambda(args []interface{}, env envList) (interface{}, error) {
-	if len(args) != 2 {
-		return nil, fmt.Errorf("malformed lambda")
-	}
-	body := args[1]
-
-	arg0, ok := args[0].([]interface{})
-	if !ok {
-		return nil, fmt.Errorf("malformed lambda")
-	}
-
-	var params []string
-	for _, v := range arg0 {
-		param, ok := v.(string)
-		if !ok {
-			return nil, fmt.Errorf("malformed lambda")
-		}
-		params = append(params, param)
-	}
-
-	lambda := &lambdaExpr{
-		params: params,
-		body:   body,
-		env:    env,
-	}
-	return lambda, nil
-}
-
-func eval(sexpr interface{}, env envList) (interface{}, error) {
-	if name, ok := sexpr.(string); ok { // name
-		e := findEnv(name, env)
-		if e != nil {
-			return e[name], nil
-		}
-		return nil, fmt.Errorf("unknown name - %s", name)
-	}
-
-	list, ok := sexpr.([]interface{})
-	if !ok {
-		return sexpr, nil // atom
-	}
-
-	op, rest := list[0], list[1:]
-	name, ok := op.(string)
-
-	// Special cases
-	if ok {
-		switch name {
-		case "define":
-			return evalDefine(rest, env)
-		case "lambda":
-			return makeLambda(rest, env)
-		case "set!":
-			return evalSet(rest, env)
-		}
-	}
-
-	val, err := eval(op, env)
-	if err != nil {
-		return nil, err
-	}
-	// function invocation
-	fn, ok := val.(callable)
-	if !ok {
-		return nil, fmt.Errorf("%v is not a function", val)
-	}
-
-	var args []interface{}
-	for _, expr := range rest {
-		arg, err := eval(expr, env)
-		if err != nil {
-			return nil, err
-		}
-		args = append(args, arg)
-	}
-
-	return fn.call(args, env)
+	return &NameExpr{lit}, tokens, nil // name
 }
 
 func repl() {
@@ -393,25 +254,27 @@ func repl() {
 		}
 
 		tokens := tokenize(text)
-		sexpr, _, err := readSExpr(tokens)
-		if err != nil {
-			fmt.Printf("[read error]: %s\n", err)
-			continue
-		}
+		// fmt.Println("tokens →", tokens)
 
-		val, err := eval(sexpr, builtins)
+		expr, _, err := ReadExpr(tokens)
 		if err != nil {
-			fmt.Printf("[eval error]: %s\n", err)
+			fmt.Println("ERROR: ", err)
 			continue
 		}
-		if val != nil {
-			fmt.Println(val)
+		//fmt.Printf("expr → %s\n", expr)
+
+		out, err := expr.Eval()
+		if err != nil {
+			fmt.Println("ERROR: ", err)
+		} else {
+			fmt.Println(out)
 		}
 	}
 }
 
+// rlwrap go run humble.go
 func main() {
 	fmt.Println("Welcome to Hubmle lisp (hit CTRL-D to quit)")
 	repl()
-	fmt.Println("\nCiao ☺")
+	fmt.Println("\nkthxbai ☺")
 }
