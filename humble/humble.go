@@ -129,61 +129,16 @@ func (e *ListExpr) Eval(env Environment) (Object, error) {
 
 	switch op {
 	case "define": // (define n 27)
-		if len(args) != 2 {
-			return nil, fmt.Errorf("wrong number of arguments for 'define'")
-		}
-
-		s, ok := args[0].(*SymbolExpr)
-		if !ok {
-			return nil, fmt.Errorf("bad name in 'define'")
-		}
-
-		val, err := args[1].Eval(env)
-		if err != nil {
-			return nil, err
-		}
-		env[0][s.name] = val
-		return val, nil
+		return evalDefine(args, env)
+	case "set!": // (set! n 27)
+		return evalSet(args, env)
 	case "if": // (if (< x 0) 0 x)
-		if len(args) != 3 { // TODO: if without else
-			return nil, fmt.Errorf("wrong number of arguments for 'define'")
-		}
-
-		cond, err := args[0].Eval(env)
-		if err != nil {
-			return nil, err
-		}
-
-		if cond == 1.0 {
-			return args[1].Eval(env)
-		}
-		return args[2].Eval(env)
+		return evalIf(args, env)
 	case "lambda": // (lambda (n) (+ n 1))
-		if len(args) != 2 {
-			return nil, fmt.Errorf("malformed lambda")
-		}
-
-		le, ok := args[0].(*ListExpr)
-		if !ok {
-			return nil, fmt.Errorf("malformed lambda")
-		}
-
-		names := make([]string, len(le.children))
-		for i, e := range le.children {
-			s, ok := e.(*SymbolExpr)
-			if !ok {
-				return nil, fmt.Errorf("malformed lambda")
-			}
-			names[i] = s.name
-		}
-		obj := &Lambda{
-			env:  env,
-			args: names,
-			body: args[1],
-		}
-		return obj, nil
+		return evalLambda(args, env)
 	}
 
+	// Function call
 	scope := env.Find(op)
 	if scope == nil {
 		return nil, fmt.Errorf("unknown name - %s", op)
@@ -205,6 +160,90 @@ func (e *ListExpr) Eval(env Environment) (Object, error) {
 	}
 
 	return c.Call(params)
+}
+
+func evalDefine(args []Expression, env Environment) (Object, error) {
+	if len(args) != 2 {
+		return nil, fmt.Errorf("wrong number of arguments for 'define'")
+	}
+
+	s, ok := args[0].(*SymbolExpr)
+	if !ok {
+		return nil, fmt.Errorf("bad name in 'define'")
+	}
+
+	val, err := args[1].Eval(env)
+	if err != nil {
+		return nil, err
+	}
+	env[len(env)-1][s.name] = val
+	return val, nil
+}
+
+func evalSet(args []Expression, env Environment) (Object, error) {
+	if len(args) != 2 {
+		return nil, fmt.Errorf("wrong number of arguments for 'define'")
+	}
+
+	s, ok := args[0].(*SymbolExpr)
+	if !ok {
+		return nil, fmt.Errorf("bad name in 'define'")
+	}
+
+	scope := env.Find(s.name)
+	if scope == nil {
+		return nil, fmt.Errorf("unknown name - %s", s.name)
+	}
+
+	val, err := args[1].Eval(env)
+	if err != nil {
+		return nil, err
+	}
+
+	scope[s.name] = val
+	return val, nil
+}
+
+func evalIf(args []Expression, env Environment) (Object, error) {
+	if len(args) != 3 { // TODO: if without else
+		return nil, fmt.Errorf("wrong number of arguments for 'define'")
+	}
+
+	cond, err := args[0].Eval(env)
+	if err != nil {
+		return nil, err
+	}
+
+	if cond == 1.0 {
+		return args[1].Eval(env)
+	}
+	return args[2].Eval(env)
+}
+
+func evalLambda(args []Expression, env Environment) (Object, error) {
+	if len(args) != 2 {
+		return nil, fmt.Errorf("malformed lambda")
+	}
+
+	le, ok := args[0].(*ListExpr)
+	if !ok {
+		return nil, fmt.Errorf("malformed lambda")
+	}
+
+	params := make([]string, len(le.children))
+	for i, e := range le.children {
+		s, ok := e.(*SymbolExpr)
+		if !ok {
+			return nil, fmt.Errorf("malformed lambda")
+		}
+		params[i] = s.name
+	}
+	obj := &Lambda{
+		env:    env,
+		params: params,
+		body:   args[1],
+	}
+	return obj, nil
 }
 
 type Callable interface {
@@ -250,40 +289,45 @@ type BinOp struct {
 
 func (bo *BinOp) Call(args []Object) (Object, error) {
 	if len(args) != 2 {
-		return nil, fmt.Errorf("%s: wrong number of arguments (want 2, got %d)", bo.name, len(args))
+		return nil, bo.errorf("wrong number of arguments (want 2, got %d)", len(args))
 	}
 
 	a, ok := args[0].(float64)
 	if !ok {
-		return nil, fmt.Errorf("%s: bad type for first argument - %T", bo.name, args[0])
+		return nil, bo.errorf("bad type for first argument - %T", args[0])
 	}
 
 	b, ok := args[1].(float64)
 	if !ok {
-		return nil, fmt.Errorf("%s: bad type for second argument - %T", bo.name, args[0])
+		return nil, bo.errorf("bad type for second argument - %T", args[0])
 	}
 
 	val, err := bo.op(a, b)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %s", bo.name, err)
+		return nil, bo.errorf("%s", err)
 	}
 
 	return val, nil
 }
 
+func (bo *BinOp) errorf(format string, args ...interface{}) error {
+	msg := fmt.Sprintf(format, args...)
+	return fmt.Errorf("%s - %s", bo.name, msg)
+}
+
 type Lambda struct {
-	env  Environment
-	args []string
-	body Expression
+	env    Environment
+	params []string
+	body   Expression
 }
 
 func (l *Lambda) Call(args []Object) (Object, error) {
-	if len(args) != len(l.args) {
-		return nil, fmt.Errorf("wrong number of arguments (want %d, got %d)", len(l.args), args)
+	if len(args) != len(l.params) {
+		return nil, fmt.Errorf("wrong number of arguments (want %d, got %d)", len(l.params), args)
 	}
 
 	scope := map[string]Object{}
-	for i, name := range l.args {
+	for i, name := range l.params {
 		scope[name] = args[i]
 	}
 
@@ -294,7 +338,7 @@ func (l *Lambda) Call(args []Object) (Object, error) {
 func (l *Lambda) String() string {
 	var buf bytes.Buffer
 	fmt.Fprintf(&buf, "(lambda (")
-	fmt.Fprintf(&buf, strings.Join(l.args, " "))
+	fmt.Fprintf(&buf, strings.Join(l.params, " "))
 	fmt.Fprintf(&buf, ") ")
 	fmt.Fprintf(&buf, "%s", l.body)
 	return buf.String()
@@ -369,18 +413,22 @@ func repl() {
 
 		expr, _, err := ReadExpr(tokens)
 		if err != nil {
-			fmt.Println("ERROR: ", err)
+			printError(err)
 			continue
 		}
 		//fmt.Printf("expr → %s\n", expr)
 
 		out, err := expr.Eval(builtins)
 		if err != nil {
-			fmt.Println("ERROR: ", err)
-		} else {
-			fmt.Println(out)
+			printError(err)
+			continue
 		}
+		fmt.Println(out)
 	}
+}
+
+func printError(err error) {
+	fmt.Printf("\033[31mERROR: %s\033[0m\n", err)
 }
 
 // rlwrap go run humble.go
