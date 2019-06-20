@@ -68,7 +68,8 @@ func init() {
 // Token in the language
 type Token string
 
-func tokenize(code string) []Token {
+// Tokenize splits the t list of tokens
+func Tokenize(code string) []Token {
 	code = strings.Replace(code, "(", " ( ", -1)
 	code = strings.Replace(code, ")", " )", -1)
 	var tokens []Token
@@ -496,7 +497,7 @@ func repl() {
 			continue
 		}
 
-		tokens := tokenize(text)
+		tokens := Tokenize(text)
 		// fmt.Println("tokens →", tokens)
 
 		expr, _, err := ReadExpr(tokens)
