@@ -3,4 +3,4 @@
     (lambda (val)
       (+ val n))))
 
-(println ((make-adder 3) 4))
+(println ((make-adder 3) 4)) ; 7
