@@ -15,54 +15,43 @@ var (
 )
 
 func init() {
-	builtins = append(builtins, map[string]Object{
+	s := Scope{
 		"+":     Function(Plus),
 		"*":     Function(Mul),
 		"begin": Function(Begin),
-		"%": &BinOp{
-			name: "%",
-			op: func(a, b float64) (Object, error) {
-				if b == 0 {
-					return nil, fmt.Errorf("division by zero")
-				}
-				return float64(int(a) % int(b)), nil
-			},
-		},
-		"eq?": &BinOp{
-			name: "eq?",
-			op: func(a, b float64) (Object, error) {
-				var val float64
-				if a == b {
-					val = 1
-				}
-				return val, nil
-			},
-		},
-		"<": &BinOp{
-			name: "<",
-			op: func(a, b float64) (Object, error) {
-				if a < b {
-					return 1.0, nil
-				}
-				return 0.0, nil
-			},
-		},
-		"/": &BinOp{
-			name: "/",
-			op: func(a, b float64) (Object, error) {
-				if b == 0 {
-					return nil, fmt.Errorf("division by zero")
-				}
-				return a / b, nil
-			},
-		},
-		"-": &BinOp{
-			name: "-",
-			op: func(a, b float64) (Object, error) {
-				return a - b, nil
-			},
-		},
+	}
+
+	RegisterBinOp("%", s, func(a, b float64) (Object, error) {
+		if b == 0 {
+			return nil, fmt.Errorf("division by zero")
+		}
+		return float64(int(a) % int(b)), nil
 	})
+	RegisterBinOp("eq?", s, func(a, b float64) (Object, error) {
+		var val float64
+		if a == b {
+			val = 1
+		}
+		return val, nil
+	})
+	// MT: In scheme these get arbitrary number of arguments
+	RegisterBinOp("<", s, func(a, b float64) (Object, error) {
+		if a < b {
+			return 1.0, nil
+		}
+		return 0.0, nil
+	})
+	RegisterBinOp("-", s, func(a, b float64) (Object, error) {
+		return a - b, nil
+	})
+	RegisterBinOp("/", s, func(a, b float64) (Object, error) {
+		if b == 0 {
+			return nil, fmt.Errorf("division by zero")
+		}
+		return a / b, nil
+	})
+
+	builtins = append(builtins, s)
 }
 
 // Token in the language
@@ -399,6 +388,11 @@ func (bo *BinOp) errorf(format string, args ...interface{}) error {
 	return fmt.Errorf("%s - %s", bo.name, msg)
 }
 
+// RegisterBinOp registers a new BinOp
+func RegisterBinOp(name string, scope Scope, op func(float64, float64) (Object, error)) {
+	scope[name] = &BinOp{name: name, op: op}
+}
+
 // Lambda is a lambda object. e.g. (lambda (n) (+ n 1))
 type Lambda struct {
 	env    Environment
@@ -412,7 +406,7 @@ func (l *Lambda) Call(args []Object) (Object, error) {
 		return nil, fmt.Errorf("wrong number of arguments (want %d, got %d)", len(l.params), args)
 	}
 
-	scope := map[string]Object{}
+	scope := Scope{}
 	for i, name := range l.params {
 		scope[name] = args[i]
 	}
@@ -470,11 +464,14 @@ func ReadExpr(tokens []Token) (Expression, []Token, error) {
 	return &SymbolExpr{lit}, tokens, nil // name
 }
 
+// Scope of variable
+type Scope map[string]Object // Not sure about the name Scope
+
 // Environment holds name → values
-type Environment []map[string]Object
+type Environment []Scope
 
 // Find finds the environment holding name, return nil if not found
-func (e Environment) Find(name string) map[string]Object {
+func (e Environment) Find(name string) Scope {
 	for i := len(e) - 1; i >= 0; i-- {
 		if _, ok := e[i][name]; ok {
 			return e[i]
