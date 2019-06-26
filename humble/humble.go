@@ -11,47 +11,46 @@ import (
 )
 
 var (
-	builtins Environment
+	builtins *Environment
 )
 
 func init() {
-	s := Scope{
+	m := map[string]Object{
 		"+":     Function(Plus),
 		"*":     Function(Mul),
 		"begin": Function(Begin),
+		"%": &BinOp{"%", func(a, b float64) (Object, error) {
+			if b == 0 {
+				return nil, fmt.Errorf("division by zero")
+			}
+			return float64(int(a) % int(b)), nil
+		}},
+		"eq?": &BinOp{"eq?", func(a, b float64) (Object, error) {
+			var val float64
+			if a == b {
+				val = 1
+			}
+			return val, nil
+		}},
+		// MT: In scheme these get arbitrary number of arguments
+		"<": &BinOp{"<", func(a, b float64) (Object, error) {
+			if a < b {
+				return 1.0, nil
+			}
+			return 0.0, nil
+		}},
+		"-": &BinOp{"-", func(a, b float64) (Object, error) {
+			return a - b, nil
+		}},
+		"/": &BinOp{"/", func(a, b float64) (Object, error) {
+			if b == 0 {
+				return nil, fmt.Errorf("division by zero")
+			}
+			return a / b, nil
+		}},
 	}
 
-	RegisterBinOp("%", s, func(a, b float64) (Object, error) {
-		if b == 0 {
-			return nil, fmt.Errorf("division by zero")
-		}
-		return float64(int(a) % int(b)), nil
-	})
-	RegisterBinOp("eq?", s, func(a, b float64) (Object, error) {
-		var val float64
-		if a == b {
-			val = 1
-		}
-		return val, nil
-	})
-	// MT: In scheme these get arbitrary number of arguments
-	RegisterBinOp("<", s, func(a, b float64) (Object, error) {
-		if a < b {
-			return 1.0, nil
-		}
-		return 0.0, nil
-	})
-	RegisterBinOp("-", s, func(a, b float64) (Object, error) {
-		return a - b, nil
-	})
-	RegisterBinOp("/", s, func(a, b float64) (Object, error) {
-		if b == 0 {
-			return nil, fmt.Errorf("division by zero")
-		}
-		return a / b, nil
-	})
-
-	builtins = append(builtins, s)
+	builtins = &Environment{m, nil}
 }
 
 // Token in the language
@@ -70,7 +69,7 @@ func Tokenize(code string) []Token {
 
 // Expression to be computed
 type Expression interface {
-	Eval(env Environment) (Object, error)
+	Eval(env *Environment) (Object, error)
 }
 
 // Object in the language
@@ -86,7 +85,7 @@ func (e *NumberExpr) String() string {
 }
 
 // Eval evaluates value
-func (e *NumberExpr) Eval(env Environment) (Object, error) {
+func (e *NumberExpr) Eval(env *Environment) (Object, error) {
 	return e.value, nil
 }
 
@@ -100,13 +99,13 @@ func (e *SymbolExpr) String() string {
 }
 
 // Eval evaluates value
-func (e *SymbolExpr) Eval(env Environment) (Object, error) {
-	scope := env.Find(e.name)
-	if scope == nil {
+func (e *SymbolExpr) Eval(env *Environment) (Object, error) {
+	env = env.Find(e.name)
+	if env == nil {
 		return nil, fmt.Errorf("unknown name - %q", e.name)
 	}
 
-	return scope[e.name], nil
+	return env.Get(e.name), nil
 }
 
 // ListExpr is a list expression. e.g. (* 4 5)
@@ -128,7 +127,7 @@ func (e *ListExpr) String() string {
 }
 
 // Eval evaluates value
-func (e *ListExpr) Eval(env Environment) (Object, error) {
+func (e *ListExpr) Eval(env *Environment) (Object, error) {
 	if len(e.children) == 0 {
 		return nil, fmt.Errorf("empty list expression")
 	}
@@ -178,7 +177,7 @@ func (e *ListExpr) Eval(env Environment) (Object, error) {
 	return c.Call(params)
 }
 
-func evalDefine(args []Expression, env Environment) (Object, error) {
+func evalDefine(args []Expression, env *Environment) (Object, error) {
 	if len(args) != 2 {
 		return nil, fmt.Errorf("wrong number of arguments for 'define'")
 	}
@@ -192,11 +191,11 @@ func evalDefine(args []Expression, env Environment) (Object, error) {
 	if err != nil {
 		return nil, err
 	}
-	env[len(env)-1][s.name] = val
+	env.Set(s.name, val)
 	return val, nil
 }
 
-func evalSet(args []Expression, env Environment) (Object, error) {
+func evalSet(args []Expression, env *Environment) (Object, error) {
 	if len(args) != 2 {
 		return nil, fmt.Errorf("wrong number of arguments for 'define'")
 	}
@@ -206,8 +205,8 @@ func evalSet(args []Expression, env Environment) (Object, error) {
 		return nil, fmt.Errorf("bad name in 'define'")
 	}
 
-	scope := env.Find(s.name)
-	if scope == nil {
+	env = env.Find(s.name)
+	if env == nil {
 		return nil, fmt.Errorf("unknown name - %s", s.name)
 	}
 
@@ -216,11 +215,11 @@ func evalSet(args []Expression, env Environment) (Object, error) {
 		return nil, err
 	}
 
-	scope[s.name] = val
+	env.Set(s.name, val)
 	return val, nil
 }
 
-func evalIf(args []Expression, env Environment) (Object, error) {
+func evalIf(args []Expression, env *Environment) (Object, error) {
 	if len(args) != 3 { // TODO: if without else
 		return nil, fmt.Errorf("wrong number of arguments for 'define'")
 	}
@@ -236,7 +235,7 @@ func evalIf(args []Expression, env Environment) (Object, error) {
 	return args[2].Eval(env)
 }
 
-func evalOr(args []Expression, env Environment) (Object, error) {
+func evalOr(args []Expression, env *Environment) (Object, error) {
 	for _, e := range args {
 		obj, err := e.Eval(env)
 		if err != nil {
@@ -256,7 +255,7 @@ func evalOr(args []Expression, env Environment) (Object, error) {
 	return 0.0, nil
 }
 
-func evalAnd(args []Expression, env Environment) (Object, error) {
+func evalAnd(args []Expression, env *Environment) (Object, error) {
 	val, ok := 1.0, false
 	for _, e := range args {
 		obj, err := e.Eval(env)
@@ -277,7 +276,7 @@ func evalAnd(args []Expression, env Environment) (Object, error) {
 	return val, nil
 }
 
-func evalLambda(args []Expression, env Environment) (Object, error) {
+func evalLambda(args []Expression, env *Environment) (Object, error) {
 	if len(args) != 2 {
 		return nil, fmt.Errorf("malformed lambda")
 	}
@@ -388,14 +387,9 @@ func (bo *BinOp) errorf(format string, args ...interface{}) error {
 	return fmt.Errorf("%s - %s", bo.name, msg)
 }
 
-// RegisterBinOp registers a new BinOp
-func RegisterBinOp(name string, scope Scope, op func(float64, float64) (Object, error)) {
-	scope[name] = &BinOp{name: name, op: op}
-}
-
 // Lambda is a lambda object. e.g. (lambda (n) (+ n 1))
 type Lambda struct {
-	env    Environment
+	env    *Environment
 	params []string
 	body   Expression
 }
@@ -406,12 +400,12 @@ func (l *Lambda) Call(args []Object) (Object, error) {
 		return nil, fmt.Errorf("wrong number of arguments (want %d, got %d)", len(l.params), args)
 	}
 
-	scope := Scope{}
+	m := make(map[string]Object)
 	for i, name := range l.params {
-		scope[name] = args[i]
+		m[name] = args[i]
 	}
 
-	env := append(l.env, scope)
+	env := &Environment{m, l.env}
 	return l.body.Eval(env)
 }
 
@@ -464,20 +458,32 @@ func ReadExpr(tokens []Token) (Expression, []Token, error) {
 	return &SymbolExpr{lit}, tokens, nil // name
 }
 
-// Scope of variable
-type Scope map[string]Object // Not sure about the name Scope
-
 // Environment holds name → values
-type Environment []Scope
+type Environment struct {
+	bindings map[string]Object
+	parent   *Environment
+}
 
 // Find finds the environment holding name, return nil if not found
-func (e Environment) Find(name string) Scope {
-	for i := len(e) - 1; i >= 0; i-- {
-		if _, ok := e[i][name]; ok {
-			return e[i]
-		}
+func (e *Environment) Find(name string) *Environment {
+	if _, ok := e.bindings[name]; ok {
+		return e
 	}
-	return nil
+
+	if e.parent == nil {
+		return nil
+	}
+	return e.parent.Find(name)
+}
+
+// Get returns bindings for name in environment
+func (e *Environment) Get(name string) Object {
+	return e.bindings[name]
+}
+
+// Set sets bindings for name
+func (e *Environment) Set(name string, value Object) {
+	e.bindings[name] = value
 }
 
 func repl() {
