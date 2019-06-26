@@ -174,7 +174,7 @@ func (e *ListExpr) Eval(env Environment) (Object, error) {
 
 	c, ok := obj.(Callable)
 	if !ok {
-		return nil, fmt.Errorf("%s is not callabled", obj)
+		return nil, fmt.Errorf("%s is not callable", obj)
 	}
 
 	var params []Object
