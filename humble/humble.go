@@ -424,7 +424,7 @@ func (l *Lambda) Call(args []Object) (Object, error) {
 func (l *Lambda) String() string {
 	var buf bytes.Buffer
 	fmt.Fprintf(&buf, "(lambda (")
-	fmt.Fprintf(&buf, strings.Join(l.params, " "))
+	fmt.Fprint(&buf, strings.Join(l.params, " "))
 	fmt.Fprintf(&buf, ") ")
 	fmt.Fprintf(&buf, "%s", l.body)
 	return buf.String()
