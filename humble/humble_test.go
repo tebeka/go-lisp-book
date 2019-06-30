@@ -9,12 +9,12 @@ func run(t *testing.T, code string) Object {
 	tokens := Tokenize(code)
 	expr, _, err := ReadExpr(tokens)
 	if err != nil {
-		t.Fatal("read expression")
+		t.Fatalf("read expression: %s", err)
 	}
 
 	obj, err := expr.Eval(builtins)
 	if err != nil {
-		t.Fatal("eval")
+		t.Fatalf("eval: %s", err)
 	}
 
 	return obj
@@ -25,8 +25,8 @@ var evalTestCases = []struct {
 	expr     string
 	out      Object
 }{
-	{"fact.scm", "(fact 10)", 3628800.0},
-	{"collatz.scm", "(collatz 7)", 22.0},
+	{"fact.scm", "(fact 10)", Number(3628800.0)},
+	{"collatz.scm", "(collatz 7)", Number(22.0)},
 }
 
 func TestEval(t *testing.T) {
@@ -50,12 +50,12 @@ var logicTestCases = []struct {
 	expr string
 	out  Object
 }{
-	{"(or)", 0.0},
-	{"(or 1 2)", 1.0},
-	{"(or 0 2 1)", 2.0},
-	{"(and)", 1.0},
-	{"(and 1 2)", 2.0},
-	{"(and 1 0 3)", 0.0},
+	{"(or)", Number(0.0)},
+	{"(or 1 2)", Number(1.0)},
+	{"(or 0 2 1)", Number(2.0)},
+	{"(and)", Number(1.0)},
+	{"(and 1 2)", Number(2.0)},
+	{"(and 1 0 3)", Number(0.0)},
 }
 
 func TestLogic(t *testing.T) {

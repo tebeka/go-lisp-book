@@ -15,38 +15,51 @@ var (
 )
 
 func init() {
-	m := map[string]Object{
-		"+":     Function(Plus),
-		"*":     Function(Mul),
-		"begin": Function(Begin),
-		"%": &BinOp{"%", func(a, b float64) (Object, error) {
-			if b == 0 {
+	m := map[Symbol]Object{
+		"+": &Function{"+", 0, func(args []Number) (Object, error) {
+			total := Number(0.0)
+			for _, val := range args {
+				total += val
+			}
+
+			return total, nil
+		}},
+		"*": &Function{"*", 0, func(args []Number) (Object, error) {
+			total := Number(1.0)
+			for _, val := range args {
+				total *= val
+			}
+
+			return total, nil
+		}},
+		"begin": &begin{},
+		"%": &Function{"%", 2, func(args []Number) (Object, error) {
+			if args[1] == 0 {
 				return nil, fmt.Errorf("division by zero")
 			}
-			return float64(int(a) % int(b)), nil
+			return Number(int(args[0]) % int(args[1])), nil
 		}},
-		"eq?": &BinOp{"eq?", func(a, b float64) (Object, error) {
-			var val float64
-			if a == b {
-				val = 1
-			}
-			return val, nil
-		}},
-		// MT: In scheme these get arbitrary number of arguments
-		"<": &BinOp{"<", func(a, b float64) (Object, error) {
-			if a < b {
+		"eq?": &Function{"eq?", 2, func(args []Number) (Object, error) {
+			if args[0] == args[1] {
 				return 1.0, nil
 			}
 			return 0.0, nil
 		}},
-		"-": &BinOp{"-", func(a, b float64) (Object, error) {
-			return a - b, nil
+		// MT: In scheme these get arbitrary number of arguments
+		"<": &Function{"<", 2, func(args []Number) (Object, error) {
+			if args[0] < args[1] {
+				return 1.0, nil
+			}
+			return 0.0, nil
 		}},
-		"/": &BinOp{"/", func(a, b float64) (Object, error) {
-			if b == 0 {
+		"-": &Function{"-", 2, func(args []Number) (Object, error) {
+			return args[0] - args[1], nil
+		}},
+		"/": &Function{"/", 2, func(args []Number) (Object, error) {
+			if args[1] == 0 {
 				return nil, fmt.Errorf("division by zero")
 			}
-			return a / b, nil
+			return args[0] / args[1], nil
 		}},
 	}
 
@@ -76,36 +89,27 @@ type Expression interface {
 type Object interface{}
 
 // NumberExpr is a number. e.g. 3.14
-type NumberExpr struct {
-	value float64
-}
+type NumberExpr float64
 
-func (e *NumberExpr) String() string {
-	return fmt.Sprintf("%v", e.value)
-}
+// Number is a number in the language
+type Number float64
 
 // Eval evaluates value
-func (e *NumberExpr) Eval(env *Environment) (Object, error) {
-	return e.value, nil
+func (e NumberExpr) Eval(env *Environment) (Object, error) {
+	return Number(e), nil
 }
 
-// SymbolExpr is a symbol. e.g. pi
-type SymbolExpr struct {
-	name string
-}
-
-func (e *SymbolExpr) String() string {
-	return fmt.Sprintf("%v", e.name)
-}
+// Symbol is a symbol. e.g. pi
+type Symbol string
 
 // Eval evaluates value
-func (e *SymbolExpr) Eval(env *Environment) (Object, error) {
-	env = env.Find(e.name)
+func (e Symbol) Eval(env *Environment) (Object, error) {
+	env = env.Find(e)
 	if env == nil {
-		return nil, fmt.Errorf("unknown name - %q", e.name)
+		return nil, fmt.Errorf("unknown name - %q", e)
 	}
 
-	return env.Get(e.name), nil
+	return env.Get(e), nil
 }
 
 // ListExpr is a list expression. e.g. (* 4 5)
@@ -135,10 +139,8 @@ func (e *ListExpr) Eval(env *Environment) (Object, error) {
 	rest := e.children[1:]
 
 	// Try special forms first
-	ne, ok := e.children[0].(*SymbolExpr)
+	op, ok := e.children[0].(Symbol)
 	if ok {
-		op := ne.name
-
 		switch op {
 		case "define": // (define n 27)
 			return evalDefine(rest, env)
@@ -182,7 +184,7 @@ func evalDefine(args []Expression, env *Environment) (Object, error) {
 		return nil, fmt.Errorf("wrong number of arguments for 'define'")
 	}
 
-	s, ok := args[0].(*SymbolExpr)
+	s, ok := args[0].(Symbol)
 	if !ok {
 		return nil, fmt.Errorf("bad name in 'define'")
 	}
@@ -191,7 +193,7 @@ func evalDefine(args []Expression, env *Environment) (Object, error) {
 	if err != nil {
 		return nil, err
 	}
-	env.Set(s.name, val)
+	env.Set(s, val)
 	return val, nil
 }
 
@@ -200,14 +202,14 @@ func evalSet(args []Expression, env *Environment) (Object, error) {
 		return nil, fmt.Errorf("wrong number of arguments for 'define'")
 	}
 
-	s, ok := args[0].(*SymbolExpr)
+	s, ok := args[0].(Symbol)
 	if !ok {
 		return nil, fmt.Errorf("bad name in 'define'")
 	}
 
-	env = env.Find(s.name)
+	env = env.Find(s)
 	if env == nil {
-		return nil, fmt.Errorf("unknown name - %s", s.name)
+		return nil, fmt.Errorf("unknown name - %s", s)
 	}
 
 	val, err := args[1].Eval(env)
@@ -215,7 +217,7 @@ func evalSet(args []Expression, env *Environment) (Object, error) {
 		return nil, err
 	}
 
-	env.Set(s.name, val)
+	env.Set(s, val)
 	return val, nil
 }
 
@@ -242,7 +244,7 @@ func evalOr(args []Expression, env *Environment) (Object, error) {
 			return nil, err
 		}
 
-		val, ok := obj.(float64)
+		val, ok := obj.(Number)
 		if !ok {
 			return nil, fmt.Errorf("or - %v bad type %T", val, val)
 		}
@@ -252,28 +254,31 @@ func evalOr(args []Expression, env *Environment) (Object, error) {
 		}
 	}
 
-	return 0.0, nil
+	return Number(0.0), nil
 }
 
 func evalAnd(args []Expression, env *Environment) (Object, error) {
-	val, ok := 1.0, false
-	for _, e := range args {
-		obj, err := e.Eval(env)
+	for i, arg := range args {
+		obj, err := arg.Eval(env)
 		if err != nil {
 			return nil, err
 		}
 
-		val, ok = obj.(float64)
+		val, ok := obj.(Number)
 		if !ok {
 			return nil, fmt.Errorf("or - %v bad type %T", val, val)
 		}
 
-		if val == 0.0 {
+		if val == Number(0.0) {
+			return val, nil
+		}
+
+		if i == len(args)-1 {
 			return val, nil
 		}
 	}
 
-	return val, nil
+	return Number(1), nil
 }
 
 func evalLambda(args []Expression, env *Environment) (Object, error) {
@@ -286,13 +291,13 @@ func evalLambda(args []Expression, env *Environment) (Object, error) {
 		return nil, fmt.Errorf("malformed lambda")
 	}
 
-	params := make([]string, len(le.children))
+	params := make([]Symbol, len(le.children))
 	for i, e := range le.children {
-		s, ok := e.(*SymbolExpr)
+		s, ok := e.(Symbol)
 		if !ok {
 			return nil, fmt.Errorf("malformed lambda")
 		}
-		params[i] = s.name
+		params[i] = s
 	}
 	obj := &Lambda{
 		env:    env,
@@ -307,44 +312,10 @@ type Callable interface {
 	Call(args []Object) (Object, error)
 }
 
-// Function object
-type Function func(args []Object) (Object, error)
-
-// Call implements Callable
-func (f Function) Call(args []Object) (Object, error) {
-	return f(args)
-}
-
-// Plus function. e.g. (+ 1 2 3)
-func Plus(args []Object) (Object, error) {
-	total := 0.0
-	for i, arg := range args {
-		fval, ok := arg.(float64)
-		if !ok {
-			return nil, fmt.Errorf("%d bad argument: %v of %T", i, args, arg)
-		}
-		total += fval
-	}
-
-	return total, nil
-}
-
-// Mul function. e.g. (* 1 2 3)
-func Mul(args []Object) (Object, error) {
-	total := 1.0
-	for i, arg := range args {
-		fval, ok := arg.(float64)
-		if !ok {
-			return nil, fmt.Errorf("%d bad argument: %v of %T", i, args, arg)
-		}
-		total *= fval
-	}
-
-	return total, nil
-}
+type begin struct{}
 
 // Begin function. e.g. (begin (* 3 4) (/ 5 7))
-func Begin(args []Object) (Object, error) {
+func (b *begin) Call(args []Object) (Object, error) {
 	if len(args) == 0 {
 		return 0.0, nil
 	}
@@ -352,45 +323,45 @@ func Begin(args []Object) (Object, error) {
 	return args[len(args)-1], nil
 }
 
-// BinOp is a binary (two argument) operator/function
-type BinOp struct {
-	name string
-	op   func(float64, float64) (Object, error)
+// Function object
+type Function struct {
+	name  string
+	nargs int
+	op    func(args []Number) (Object, error)
 }
 
 // Call implement Callable
-func (bo *BinOp) Call(args []Object) (Object, error) {
-	if len(args) != 2 {
-		return nil, bo.errorf("wrong number of arguments (want 2, got %d)", len(args))
+func (f *Function) Call(args []Object) (Object, error) {
+	if f.nargs != 0 && len(args) != f.nargs {
+		return nil, f.errorf("wrong number of arguments (want %d, got %d)", f.nargs, len(args))
 	}
 
-	a, ok := args[0].(float64)
-	if !ok {
-		return nil, bo.errorf("bad type for first argument - %T", args[0])
+	var vals []Number
+	for i, obj := range args {
+		val, ok := obj.(Number)
+		if !ok {
+			return nil, f.errorf("argument %d: got %v of type %T", i, obj, obj)
+		}
+		vals = append(vals, val)
 	}
 
-	b, ok := args[1].(float64)
-	if !ok {
-		return nil, bo.errorf("bad type for second argument - %T", args[0])
-	}
-
-	val, err := bo.op(a, b)
+	val, err := f.op(vals)
 	if err != nil {
-		return nil, bo.errorf("%s", err)
+		return nil, f.errorf("%s", err)
 	}
 
 	return val, nil
 }
 
-func (bo *BinOp) errorf(format string, args ...interface{}) error {
+func (f *Function) errorf(format string, args ...interface{}) error {
 	msg := fmt.Sprintf(format, args...)
-	return fmt.Errorf("%s - %s", bo.name, msg)
+	return fmt.Errorf("%s - %s", f.name, msg)
 }
 
 // Lambda is a lambda object. e.g. (lambda (n) (+ n 1))
 type Lambda struct {
 	env    *Environment
-	params []string
+	params []Symbol
 	body   Expression
 }
 
@@ -400,7 +371,7 @@ func (l *Lambda) Call(args []Object) (Object, error) {
 		return nil, fmt.Errorf("wrong number of arguments (want %d, got %d)", len(l.params), args)
 	}
 
-	m := make(map[string]Object)
+	m := make(map[Symbol]Object)
 	for i, name := range l.params {
 		m[name] = args[i]
 	}
@@ -412,7 +383,13 @@ func (l *Lambda) Call(args []Object) (Object, error) {
 func (l *Lambda) String() string {
 	var buf bytes.Buffer
 	fmt.Fprintf(&buf, "(lambda (")
-	fmt.Fprint(&buf, strings.Join(l.params, " "))
+	// Can't use strings.Join on []Symbol
+	for i, sym := range l.params {
+		fmt.Fprint(&buf, sym)
+		if i < len(l.params)-1 {
+			fmt.Fprint(&buf, " ")
+		}
+	}
 	fmt.Fprintf(&buf, ") ")
 	fmt.Fprintf(&buf, "%s", l.body)
 	return buf.String()
@@ -453,19 +430,19 @@ func ReadExpr(tokens []Token) (Expression, []Token, error) {
 	lit := string(tok)
 	val, err := strconv.ParseFloat(lit, 64)
 	if err == nil {
-		return &NumberExpr{val}, tokens, nil
+		return NumberExpr(val), tokens, nil
 	}
-	return &SymbolExpr{lit}, tokens, nil // name
+	return Symbol(lit), tokens, nil // name
 }
 
 // Environment holds name → values
 type Environment struct {
-	bindings map[string]Object
+	bindings map[Symbol]Object
 	parent   *Environment
 }
 
 // Find finds the environment holding name, return nil if not found
-func (e *Environment) Find(name string) *Environment {
+func (e *Environment) Find(name Symbol) *Environment {
 	if _, ok := e.bindings[name]; ok {
 		return e
 	}
@@ -477,12 +454,12 @@ func (e *Environment) Find(name string) *Environment {
 }
 
 // Get returns bindings for name in environment
-func (e *Environment) Get(name string) Object {
+func (e *Environment) Get(name Symbol) Object {
 	return e.bindings[name]
 }
 
 // Set sets bindings for name
-func (e *Environment) Set(name string, value Object) {
+func (e *Environment) Set(name Symbol, value Object) {
 	e.bindings[name] = value
 }
 
